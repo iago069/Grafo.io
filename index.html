@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Gerador de Diagramas de Interligação</title>
+<title>Grafo - Gerador Rápido Automatizado de Fluxos Organizados</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -12,9 +12,9 @@
   :root {
     box-sizing: border-box;
     --bg: #0F2536;
-    --bg-panel: #143349;
+    --bg-panel: #144930;
     --bg-panel-2: #0C1E2C;
-    --line: #33607F;
+    --line: #337f4c;
     --line-soft: #1D4A63;
     --text: #EAF2F8;
     --text-dim: #8FADC4;
@@ -104,6 +104,15 @@
   input[type="text"], input:not([type]), select, input[type="file"]::file-selector-button {
     background: var(--bg-panel); color: var(--text); border: 1px solid var(--line-soft); border-radius: 3px;
     padding: 7px 9px; font-family: var(--sans); font-size: 0.82rem;
+  }
+  input[type="color"] {
+    width: 38px; height: 32px; background: var(--bg-panel); border: 1px solid var(--line-soft); border-radius: 3px;
+    padding: 2px; cursor: pointer;
+  }
+  .color-picker {
+    display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 0.68rem;
+    color: var(--text-dim); background: var(--bg-panel-2); border: 1px solid var(--line-soft); border-radius: 3px;
+    padding: 4px 8px;
   }
   select { font-family: var(--sans); }
   .upload-label {
@@ -256,17 +265,17 @@
 
   var exemplo = {
     equipamentos: [
-      { id: "eqOLT", nome: "OLT-01", modelo: "Huawei MA5800-X2", tipo: "OLT", icone: "📡", imagem: "" },
-      { id: "eqSW", nome: "SW-Core", modelo: "Cisco Catalyst 9300", tipo: "Switch", icone: "🖧", imagem: "" },
-      { id: "eqRADIO", nome: "Rádio-Enlace-Norte", modelo: "Mimosa B11", tipo: "Rádio", icone: "📶", imagem: "" },
-      { id: "eqONT", nome: "ONT-Cliente-114", modelo: "Fiberhome AN5506", tipo: "ONT", icone: "🔌", imagem: "" },
-      { id: "eqROT", nome: "Roteador-Borda", modelo: "Mikrotik CCR2004", tipo: "Roteador", icone: "🌐", imagem: "" }
+      { id: "eqOLT", nome: "OLT-01", modelo: "Huawei MA5800-X2", tipo: "OLT", icone: "📡", imagem: "", corFonte: "#16323D" },
+      { id: "eqSW", nome: "SW-Core", modelo: "Cisco Catalyst 9300", tipo: "Switch", icone: "🖧", imagem: "", corFonte: "#16323D" },
+      { id: "eqRADIO", nome: "Rádio-Enlace-Norte", modelo: "Mimosa B11", tipo: "Rádio", icone: "📶", imagem: "", corFonte: "#16323D" },
+      { id: "eqONT", nome: "ONT-Cliente-114", modelo: "Fiberhome AN5506", tipo: "ONT", icone: "🔌", imagem: "", corFonte: "#16323D" },
+      { id: "eqROT", nome: "Roteador-Borda", modelo: "Mikrotik CCR2004", tipo: "Roteador", icone: "🌐", imagem: "", corFonte: "#16323D" }
     ],
     conexoes: [
-      { de: "eqROT", para: "eqSW", tipo: "10G SFP+" },
-      { de: "eqSW", para: "eqOLT", tipo: "1G Uplink" },
-      { de: "eqOLT", para: "eqONT", tipo: "GPON" },
-      { de: "eqSW", para: "eqRADIO", tipo: "1G Fibra" }
+      { de: "eqROT", para: "eqSW", tipo: "10G SFP+", cor: "#5A7284" },
+      { de: "eqSW", para: "eqOLT", tipo: "1G Uplink", cor: "#5A7284" },
+      { de: "eqOLT", para: "eqONT", tipo: "GPON", cor: "#5A7284" },
+      { de: "eqSW", para: "eqRADIO", tipo: "1G Fibra", cor: "#5A7284" }
     ]
   };
 
@@ -335,6 +344,7 @@
             '<input type="text" data-field="tipo" value="' + escaparHtml(eq.tipo) + '" placeholder="Tipo" list="tipos-sugeridos">' +
           '</div>' +
           '<div class="equip-row3">' +
+            '<label class="color-picker">Fonte <input type="color" data-field="corFonte" value="' + (eq.corFonte || "#16323D") + '"></label>' +
             '<label class="upload-label">Imagem/logo (opcional) <input type="file" accept="image/*" data-action="upload-imagem"></label>' +
             (eq.imagem ? '<img class="thumb" src="' + eq.imagem + '" alt=""><button type="button" class="ghost small" data-action="remover-imagem">remover imagem</button>' : '') +
           '</div>' +
@@ -360,6 +370,7 @@
           '<span class="conex-arrow">→</span>' +
           '<select data-field="para">' + opcoes(c.para) + '</select>' +
           '<input type="text" data-field="tipo" value="' + escaparHtml(c.tipo) + '" placeholder="Tipo de enlace">' +
+          '<label class="color-picker">Linha <input type="color" data-field="cor" value="' + (c.cor || "#5A7284") + '"></label>' +
           '<button type="button" class="ghost small" data-action="remover-conex" title="Remover">×</button>' +
         '</div>'
       );
@@ -498,10 +509,12 @@
     dados.equipamentos.forEach(function (eq) {
       var prefixo = eq.icone ? eq.icone + " " : "";
       var rotulo = escapar(prefixo + (eq.nome || eq.id)) + (eq.modelo ? "\\n" + escapar(eq.modelo) : "");
-      linhas.push('  "' + escapar(eq.id) + '" [label="' + rotulo + '", fillcolor="' + corPorTipo(eq.tipo) + '", fontcolor="#16323D"];');
+      var corFonte = eq.corFonte || "#16323D";
+      linhas.push('  "' + escapar(eq.id) + '" [label="' + rotulo + '", fillcolor="' + corPorTipo(eq.tipo) + '", fontcolor="' + corFonte + '"];');
     });
     dados.conexoes.forEach(function (c) {
-      var rotulo = c.tipo ? ' [label="' + escapar(c.tipo) + '"]' : "";
+      var corConexao = c.cor || "#5A7284";
+      var rotulo = c.tipo ? ' [label="' + escapar(c.tipo) + '", color="' + corConexao + '", fontcolor="' + corConexao + '"]' : ' [color="' + corConexao + '", fontcolor="' + corConexao + '"]';
       linhas.push('  "' + escapar(c.de) + '" -> "' + escapar(c.para) + '"' + rotulo + ';');
     });
     linhas.push("}");
