@@ -648,6 +648,30 @@
   "use strict";
 
   var ICONES = ["", "📡", "🔌", "🖧", "🛰️", "💻", "🗄️", "📶", "🌐", "⚡", "🧰", "🔧", "📻"];
+  var CATALOGO_ICONES = [
+    { valor: "MIROTIK.jpeg", nome: "MikroTik / RB", arquivo: "MIROTIK.jpeg" },
+    { valor: "OLT.jpeg", nome: "OLT", arquivo: "OLT.jpeg" },
+    { valor: "SWITCH.jpeg", nome: "Switch", arquivo: "SWITCH.jpeg" },
+    { valor: "WhatsApp Image 2026-09-23 at 09.56.29 (4).jpeg", nome: "Retificador / RPS", arquivo: "WhatsApp Image 2026-09-23 at 09.56.29 (4).jpeg" },
+    { valor: "WhatsApp Image 2026-09-23 at 09.56.29 (5).jpeg", nome: "Nobreak", arquivo: "WhatsApp Image 2026-09-23 at 09.56.29 (5).jpeg" },
+    { valor: "WhatsApp Image 2026-09-23 at 09.56.29.jpeg", nome: "Módulo / Conversor", arquivo: "WhatsApp Image 2026-09-23 at 09.56.29.jpeg" }
+  ];
+
+  function imagemDoIcone(valor) {
+    var item = CATALOGO_ICONES.find(function (icone) { return icone.valor === valor; });
+    return item ? item.arquivo : "";
+  }
+
+  function iconePorTipo(tipo) {
+    var chave = String(tipo || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (chave.indexOf("olt") >= 0) return "OLT.jpeg";
+    if (chave.indexOf("switch") >= 0) return "SWITCH.jpeg";
+    if (chave.indexOf("roteador") >= 0 || chave.indexOf("mikrotik") >= 0 || chave.indexOf("rb/") >= 0) return "MIROTIK.jpeg";
+    if (chave.indexOf("retificador") >= 0 || chave.indexOf("rps") >= 0) return "WhatsApp Image 2026-09-23 at 09.56.29 (4).jpeg";
+    if (chave.indexOf("nobreak") >= 0 || chave.indexOf("nobreack") >= 0) return "WhatsApp Image 2026-09-23 at 09.56.29 (5).jpeg";
+    if (chave.indexOf("conversor") >= 0 || chave.indexOf("modulo") >= 0) return "WhatsApp Image 2026-09-23 at 09.56.29.jpeg";
+    return "";
+  }
 
   var contadorId = 1;
   function novoId() { return "eq" + (contadorId++) + "_" + Math.random().toString(36).slice(2, 6); }
@@ -710,6 +734,7 @@
   var historicoRefazer = [];
   var ultimoEstadoHistorico = null;
   var aplicandoHistorico = false;
+  var atualizacaoDiagramaPendente = null;
   var canvasView = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 };
 
   function limitarZoom(valor) { return Math.min(3, Math.max(0.4, Number(valor.toFixed(2)))); }
@@ -846,6 +871,7 @@
           equipamento.deslocamento = { x: deslocamento.x, y: deslocamento.y };
           salvarLocal();
           atualizarJsonAvancado();
+          solicitarAtualizacaoDiagrama();
           node.removeEventListener("pointermove", mover);
           node.removeEventListener("pointerup", soltar);
           node.removeEventListener("pointercancel", soltar);
@@ -860,7 +886,6 @@
         if (!nome || !nome.trim()) return;
         equipamento.nome = nome.trim();
         renderTudo();
-        gerar();
       });
     });
   }
@@ -897,6 +922,7 @@
           conexao.deslocamento = { x: deslocamento.x, y: deslocamento.y };
           salvarLocal();
           atualizarJsonAvancado();
+          solicitarAtualizacaoDiagrama();
           aresta.classList.remove("selecionado");
           aresta.removeEventListener("pointermove", mover);
           aresta.removeEventListener("pointerup", soltar);
@@ -1222,6 +1248,9 @@
   function escaparHtml(s) {
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
+  function escaparHtmlDot(s) {
+    return escaparHtml(s).replace(/'/g, "&apos;");
+  }
   function corPorTipo(tipo) {
     var paleta = ["#BFE7E3", "#C9D9FF", "#FFE0A8", "#F6C4D8", "#D8C7F2", "#B9E3F5", "#D8E8B8"];
     var str = String(tipo || "outro"); var hash = 0;
@@ -1238,14 +1267,17 @@
   // ---------- Renderização dos formulários ----------
   function renderEquipamentos() {
     elListaEquip.innerHTML = estado.equipamentos.map(function (eq, i) {
-      var opcoesIcone = ICONES.map(function (ic) {
+      var opcoesEmoji = ICONES.map(function (ic) {
         return '<option value="' + escaparHtml(ic) + '"' + (ic === eq.icone ? " selected" : "") + '>' + (ic || "— sem ícone —") + '</option>';
+      }).join("");
+      var opcoesImagem = CATALOGO_ICONES.map(function (icone) {
+        return '<option value="' + escaparHtml(icone.valor) + '"' + (icone.valor === eq.icone ? " selected" : "") + '>' + escaparHtml(icone.nome) + '</option>';
       }).join("");
       return (
         '<div class="equip-card" data-idx="' + i + '">' +
           '<div class="equip-row1">' +
             '<input type="text" data-field="nome" value="' + escaparHtml(eq.nome) + '" placeholder="Nome do equipamento">' +
-            '<select data-field="icone">' + opcoesIcone + '</select>' +
+            '<select data-field="icone"><optgroup label="Símbolos">' + opcoesImagem + '</optgroup><optgroup label="Emojis">' + opcoesEmoji + '</optgroup></select>' +
             '<span class="equip-status"><i class="equip-status-dot ' + (eq.status || "ativo") + '"></i>' + (eq.status === "manutencao" ? "Manutenção" : eq.status === "offline" ? "Offline" : "Ativo") + '</span>' +
             '<button type="button" class="ghost small equip-advanced-toggle" data-action="toggle-avancado">Modo avançado</button>' +
             '<button type="button" class="ghost small" data-action="remover-equip" title="Remover">×</button>' +
@@ -1323,7 +1355,14 @@
     if (estado.equipamentos.length > 1 && de.value === para.value) para.value = estado.equipamentos[1].id;
   }
 
-  function renderTudo() { renderEquipamentos(); renderConexoes(); renderSidebarPanels(); atualizarJsonAvancado(); salvarLocal(); }
+  function solicitarAtualizacaoDiagrama() {
+    window.clearTimeout(atualizacaoDiagramaPendente);
+    atualizacaoDiagramaPendente = window.setTimeout(function () {
+      if (estado.equipamentos.length) gerar(); else limparDiagrama();
+    }, 120);
+  }
+
+  function renderTudo() { renderEquipamentos(); renderConexoes(); renderSidebarPanels(); atualizarJsonAvancado(); salvarLocal(); solicitarAtualizacaoDiagrama(); }
 
   function atualizarJsonAvancado() {
     elJsonAvancado.value = JSON.stringify(estado, null, 2);
@@ -1339,6 +1378,7 @@
     if (campo === "nome") renderConexoes();
     salvarLocal();
     atualizarJsonAvancado();
+    solicitarAtualizacaoDiagrama();
   });
 
   elListaEquip.addEventListener("change", function (e) {
@@ -1353,6 +1393,7 @@
         renderEquipamentos();
         atualizarJsonAvancado();
         salvarLocal();
+        solicitarAtualizacaoDiagrama();
       };
       leitor.readAsDataURL(arquivo);
       return;
@@ -1365,6 +1406,7 @@
     renderEquipamentos();
     salvarLocal();
     atualizarJsonAvancado();
+    solicitarAtualizacaoDiagrama();
   });
 
   elListaEquip.addEventListener("click", function (e) {
@@ -1467,7 +1509,9 @@
     var nome = document.getElementById("navEquipNome").value.trim();
     if (!nome) return;
     var arquivo = document.getElementById("navEquipImagem").files[0];
-    var novoEquipamento = { id: novoId(), nome: nome, modelo: document.getElementById("navEquipModelo").value.trim(), tipo: document.getElementById("navEquipTipo").value.trim(), icone: document.getElementById("navEquipIcone").value.trim(), imagem: "", corFonte: "#16323D" };
+    var tipo = document.getElementById("navEquipTipo").value.trim();
+    var iconeInformado = document.getElementById("navEquipIcone").value.trim();
+    var novoEquipamento = { id: novoId(), nome: nome, modelo: document.getElementById("navEquipModelo").value.trim(), tipo: tipo, icone: iconeInformado || iconePorTipo(tipo), imagem: "", corFonte: "#16323D" };
     function concluir(imagem) {
       novoEquipamento.imagem = imagem || "";
       estado.equipamentos.push(novoEquipamento);
@@ -1544,7 +1588,7 @@
         mostrarErro("Informe o nome do equipamento.");
         return;
       }
-      estado.equipamentos.push({ id: novoId(), nome: nome, modelo: modelo, tipo: tipo, icone: "", imagem: "", corFonte: cor });
+      estado.equipamentos.push({ id: novoId(), nome: nome, modelo: modelo, tipo: tipo, icone: iconePorTipo(tipo), imagem: "", corFonte: cor });
       renderTudo();
       fecharFormularioEquipamento();
       esconderErro();
@@ -1586,6 +1630,7 @@
     estado.conexoes[idx][campo] = e.target.value;
     salvarLocal();
     atualizarJsonAvancado();
+    solicitarAtualizacaoDiagrama();
   });
 
   elListaConex.addEventListener("click", function (e) {
@@ -1689,7 +1734,6 @@
       try {
         estado = importarCsv(leitor.result);
         renderTudo();
-        gerar();
         esconderErro();
       } catch (erroCsv) { mostrarErro("Não foi possível importar o CSV.\nDetalhe: " + erroCsv.message); }
       event.target.value = "";
@@ -1726,18 +1770,50 @@
       if (!c.de || !c.para) throw new Error('A conexão na posição ' + i + ' precisa de "de" e "para".');
       if (!ids[c.de] || !ids[c.para]) throw new Error('A conexão na posição ' + i + ' referencia um id inexistente.');
     });
-  }Qu
+  }
 
   function gerarDot(dados, direcao) {
-    var linhas = ["digraph G {", '  rankdir=' + direcao + ';', '  splines=polyline;', '  overlap=false;', '  nodesep=0.75;', '  ranksep=1.0;', '  pad=0.25;', '  bgcolor="transparent";',
-      '  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, margin="0.22,0.16", color="#29485A", penwidth=1.4];',
-      '  edge [fontname="Helvetica", fontsize=9, color="#58788B", fontcolor="#29485A", penwidth=1.4, arrowhead=vee, arrowsize=0.7, labeldistance=1.5, labelangle=25, labelfontname="Helvetica", labelfontsize=8];'];
+    var linhas = ["digraph G {", '  rankdir=' + direcao + ';', '  splines=ortho;', '  concentrate=false;', '  overlap=false;', '  nodesep=0.65;', '  ranksep=0.9;', '  pad=0.18;', '  bgcolor="transparent";',
+      '  node [shape=box, style="filled", fontname="Helvetica", fontsize=10, margin="0.18,0.12", color="#547184", penwidth=1.1];',
+      '  edge [fontname="Helvetica", fontsize=8, color="#263746", fontcolor="#344D61", penwidth=1.5, arrowhead=none, labeldistance=1.25, labelangle=0, labelfontname="Helvetica", labelfontsize=8];'];
+    var portasPorEquipamento = {};
+    dados.equipamentos.forEach(function (eq) { portasPorEquipamento[eq.id] = { entrada: [], saida: [] }; });
+    dados.conexoes.forEach(function (c, indice) {
+      if (portasPorEquipamento[c.de]) portasPorEquipamento[c.de].saida.push({ id: "out_" + indice, nome: c.saida || "P1" });
+      if (portasPorEquipamento[c.para]) portasPorEquipamento[c.para].entrada.push({ id: "in_" + indice, nome: c.chegada || "P2" });
+    });
+
+    function celulaPorta(porta, lado) {
+      var alinhamento = lado === "entrada" ? "RIGHT" : "LEFT";
+      var cor = lado === "entrada" ? "#D7E7F2" : "#E7DDF7";
+      return '<TD PORT="' + porta.id + '" BORDER="1" COLOR="#25206B" BGCOLOR="' + cor + '" CELLPADDING="6" ALIGN="' + alinhamento + '"><FONT FACE="Helvetica" POINT-SIZE="8" COLOR="#17212B"><B>' + escaparHtmlDot(porta.nome) + '</B></FONT></TD>';
+    }
+
     function linhaEquipamento(eq) {
       var prefixo = eq.icone ? eq.icone + " " : "";
       var status = eq.status || "ativo";
-      var rotulo = escapar(marcadorStatus(status) + " " + prefixo + (eq.nome || eq.id)) + (eq.modelo ? "\\n" + escapar(eq.modelo) : "");
+      var corStatus = corPorStatus(status);
       var corFonte = eq.corFonte || "#16323D";
-      return '    "' + escapar(eq.id) + '" [label="' + rotulo + '", fillcolor="' + corPorTipo(eq.tipo) + '", color="transparent", penwidth=0, fontcolor="' + corFonte + '"];';
+      var nome = escaparHtmlDot(eq.nome || eq.id);
+      var modelo = escaparHtmlDot(eq.modelo || "");
+      var tipo = escaparHtmlDot(eq.tipo || "Equipamento");
+      var corCabecalho = corPorTipo(eq.tipo);
+      var portas = portasPorEquipamento[eq.id] || { entrada: [], saida: [] };
+      var totalPortas = Math.max(portas.entrada.length, portas.saida.length, 1);
+      var linhasPortas = "";
+      for (var portaIndice = 0; portaIndice < totalPortas; portaIndice++) {
+        var entrada = portas.entrada[portaIndice];
+        var saida = portas.saida[portaIndice];
+        linhasPortas += '<TR>' + (entrada ? celulaPorta(entrada, "entrada") : '<TD BORDER="0" WIDTH="4"></TD>') + '<TD BORDER="0" CELLPADDING="0" WIDTH="120" HEIGHT="' + (portaIndice === 0 ? "92" : "4") + '"></TD>' + (saida ? celulaPorta(saida, "saida") : '<TD BORDER="0" WIDTH="4"></TD>') + '</TR>';
+      }
+      var rotulo = '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0">' +
+        '<TR><TD COLSPAN="3" CELLPADDING="3" ALIGN="CENTER"><FONT FACE="Helvetica" POINT-SIZE="11" COLOR="#14212B"><B>' + nome + '</B></FONT><BR/>' +
+        (modelo ? '<FONT FACE="Helvetica" POINT-SIZE="9" COLOR="#14212B">' + modelo + '</FONT><BR/>' : "") +
+        '<FONT FACE="Helvetica" POINT-SIZE="8" COLOR="#405363">' + tipo + '</FONT></TD></TR>' +
+        linhasPortas +
+        '<TR><TD COLSPAN="3" CELLPADDING="4" ALIGN="CENTER"><FONT FACE="Helvetica" POINT-SIZE="9" COLOR="' + corStatus + '"><B>' + escaparHtmlDot(marcadorStatus(status) + " " + status.toUpperCase()) + '</B></FONT></TD></TR>' +
+        '</TABLE>>';
+      return '    "' + escapar(eq.id) + '" [label=' + rotulo + ', shape=plain, color="transparent", fontcolor="' + corFonte + '"];';
     }
     var grupos = {};
     dados.equipamentos.forEach(function (eq) {
@@ -1750,18 +1826,18 @@
       var grupoId = grupo.replace(/[^a-zA-Z0-9_]/g, "_");
       linhas.push('  subgraph "cluster_' + grupoId + '" {');
       linhas.push('    label="' + escapar(grupo) + '";');
-      linhas.push('    color="#8A78B8"; style="rounded,dashed"; penwidth=1.2; fontname="Helvetica"; fontsize=10;');
+      linhas.push('    color="#6C8292"; style="rounded,dashed"; penwidth=1.0; fontname="Helvetica"; fontsize=9;');
       grupos[grupo].forEach(function (eq) { linhas.push(linhaEquipamento(eq)); });
       linhas.push("  }");
     });
-    dados.conexoes.forEach(function (c) {
+    dados.conexoes.forEach(function (c, indice) {
       var corConexao = c.cor || "#5A7284";
       var grossura = c.grossura || 2;
       var estilo = c.estilo && c.estilo !== "solid" ? ', style="' + escapar(c.estilo) + '"' : "";
-      var portas = (c.saida ? ', taillabel="' + escapar(c.saida) + '"' : "") + (c.chegada ? ', headlabel="' + escapar(c.chegada) + '"' : "");
+      var portas = ', tailport="out_' + indice + '", headport="in_' + indice + '"';
       var capacidade = c.potencia ? " · " + c.potencia : "";
       var rotuloTexto = c.tipo ? c.tipo + capacidade : capacidade.replace(/^ · /, "");
-      var rotulo = ' [label="' + escapar(rotuloTexto) + '", color="' + corConexao + '", fontcolor="' + corConexao + '", penwidth=' + grossura + estilo + portas + ']';
+      var rotulo = ' [label="' + escapar(rotuloTexto) + '", color="' + corConexao + '", fontcolor="#34495A", penwidth=' + Math.max(1, grossura) + estilo + portas + ']';
       linhas.push('  "' + escapar(c.de) + '" -> "' + escapar(c.para) + '"' + rotulo + ';');
     });
     linhas.push("}");
@@ -1785,7 +1861,10 @@
     var svgEl = elCanvas.querySelector("svg");
     if (!svgEl) return;
     var porId = {};
-    dados.equipamentos.forEach(function (eq) { if (eq.imagem) porId[eq.id] = eq.imagem; });
+    dados.equipamentos.forEach(function (eq) {
+      var imagem = eq.imagem || imagemDoIcone(eq.icone);
+      if (imagem) porId[eq.id] = imagem;
+    });
     var nodes = svgEl.querySelectorAll("g.node");
     nodes.forEach(function (g) {
       var titulo = g.querySelector("title");
@@ -1794,12 +1873,13 @@
       if (!porId[id]) return;
       try {
         var bbox = g.getBBox();
-        var tam = 18;
+        var equipamentoImagem = dados.equipamentos.find(function (eq) { return eq.id === id; });
+        var tam = equipamentoImagem && imagemDoIcone(equipamentoImagem.icone) ? 84 : 18;
         var img = document.createElementNS("http://www.w3.org/2000/svg", "image");
         img.setAttributeNS("http://www.w3.org/1999/xlink", "href", porId[id]);
         img.setAttribute("href", porId[id]);
-        img.setAttribute("x", bbox.x + 4);
-        img.setAttribute("y", bbox.y + 4);
+        img.setAttribute("x", bbox.x + (bbox.width - tam) / 2);
+        img.setAttribute("y", bbox.y + (bbox.height - tam) / 2);
         img.setAttribute("width", tam);
         img.setAttribute("height", tam);
         img.setAttribute("preserveAspectRatio", "xMidYMid slice");
@@ -1808,7 +1888,7 @@
         var clip = document.createElementNS("http://www.w3.org/2000/svg", "clipPath");
         clip.setAttribute("id", clipId);
         var rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        rect.setAttribute("x", bbox.x + 4); rect.setAttribute("y", bbox.y + 4);
+        rect.setAttribute("x", bbox.x + (bbox.width - tam) / 2); rect.setAttribute("y", bbox.y + (bbox.height - tam) / 2);
         rect.setAttribute("width", tam); rect.setAttribute("height", tam); rect.setAttribute("rx", 3);
         clip.appendChild(rect); defs.appendChild(clip);
         img.setAttribute("clip-path", "url(#" + clipId + ")");
@@ -1818,6 +1898,7 @@
   }
 
   function gerar() {
+    window.clearTimeout(atualizacaoDiagramaPendente);
     esconderErro();
     try { validarDados(estado); } catch (e) { mostrarErro(e.message); return; }
 
@@ -1858,11 +1939,34 @@
     } catch (e) {}
   });
 
+  async function prepararSvgParaExportacao(svgEl) {
+    var copia = svgEl.cloneNode(true);
+    var imagens = Array.prototype.slice.call(copia.querySelectorAll("image"));
+    await Promise.all(imagens.map(async function (imagem) {
+      var origem = imagem.getAttribute("href") || imagem.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+      if (!origem || origem.indexOf("data:") === 0) return;
+      try {
+        var resposta = await fetch(new URL(origem, document.baseURI).href);
+        var blob = await resposta.blob();
+        var leitor = new FileReader();
+        var dataUrl = await new Promise(function (resolver, rejeitar) {
+          leitor.onload = function () { resolver(leitor.result); };
+          leitor.onerror = rejeitar;
+          leitor.readAsDataURL(blob);
+        });
+        imagem.setAttribute("href", dataUrl);
+        imagem.setAttributeNS("http://www.w3.org/1999/xlink", "href", dataUrl);
+      } catch (erroImagem) {}
+    }));
+    return copia;
+  }
+
   btnBaixar.addEventListener("click", async function () {
     if (!ultimoDot) return;
     var svgEl = elCanvas.querySelector("svg");
     if (!svgEl) return;
-    var svgText = new XMLSerializer().serializeToString(svgEl);
+    var svgExportavel = await prepararSvgParaExportacao(svgEl);
+    var svgText = new XMLSerializer().serializeToString(svgExportavel);
     if (downloadsCap) {
       try { await downloadsCap.save({ filename: "diagrama-interligacao.svg", data: svgText }); return; } catch (e) {}
     }
@@ -1877,10 +1981,11 @@
     } catch (e) {}
   });
 
-  btnBaixarPng.addEventListener("click", function () {
+  btnBaixarPng.addEventListener("click", async function () {
     var svgEl = elCanvas.querySelector("svg");
     if (!svgEl) return;
-    var svgText = new XMLSerializer().serializeToString(svgEl);
+    var svgExportavel = await prepararSvgParaExportacao(svgEl);
+    var svgText = new XMLSerializer().serializeToString(svgExportavel);
     var svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
     var svgUrl = URL.createObjectURL(svgBlob);
     var imagem = new Image();
