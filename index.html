@@ -2614,70 +2614,156 @@
     }
   });
 
+  async function prepararSvgSeguroParaPng(svgEl) {
+    var copia = svgEl.cloneNode(true);
+    copia.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    copia.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+    copia.style.transform = "none";
+    copia.style.transformOrigin = "";
+
+    var imagensOriginais = Array.prototype.slice.call(svgEl.querySelectorAll("image"));
+    var imagensCopia = Array.prototype.slice.call(copia.querySelectorAll("image"));
+    var imagensIgnoradas = 0;
+
+    for (var i = 0; i < imagensCopia.length; i++) {
+      var imagem = imagensCopia[i];
+      var origem = imagem.getAttribute("href") ||
+        imagem.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+
+      if (!origem && imagensOriginais[i]) {
+        origem = imagensOriginais[i].getAttribute("href") ||
+          imagensOriginais[i].getAttributeNS("http://www.w3.org/1999/xlink", "href");
+      }
+
+      if (!origem) {
+        imagem.remove();
+        imagensIgnoradas++;
+        continue;
+      }
+
+      // Imagens enviadas pelo usuário já ficam em data URL e são seguras para canvas.
+      if (/^data:/i.test(origem)) {
+        imagem.setAttribute("href", origem);
+        imagem.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", origem);
+        continue;
+      }
+
+      // Para imagens do catálogo/arquivos relativos, tenta incorporá-las no SVG.
+      // Se a leitura for bloqueada pelo navegador (ex.: file://), remove apenas
+      // aquela imagem da cópia para NÃO bloquear o download inteiro do PNG.
+      try {
+        var absoluta = new URL(origem, document.baseURI).href;
+        var resposta = await fetch(absoluta, { cache: "force-cache" });
+        if (!resposta.ok && resposta.status !== 0) throw new Error("HTTP " + resposta.status);
+        var dataUrl = await blobParaDataUrl(await resposta.blob());
+        imagem.setAttribute("href", dataUrl);
+        imagem.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", dataUrl);
+      } catch (erroImagemPng) {
+        console.warn("Imagem ignorada somente na exportação PNG para evitar canvas bloqueado:", origem, erroImagemPng);
+        imagem.remove();
+        imagensIgnoradas++;
+      }
+    }
+
+    return { svg: copia, imagensIgnoradas: imagensIgnoradas };
+  }
+
+  function carregarSvgSerializadoComoImagem(svgText) {
+    return new Promise(function (resolver, rejeitar) {
+      var blob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var imagem = new Image();
+
+      imagem.onload = function () {
+        resolver({ imagem: imagem, url: url });
+      };
+
+      imagem.onerror = function () {
+        URL.revokeObjectURL(url);
+        rejeitar(new Error("O navegador não conseguiu rasterizar o SVG do diagrama."));
+      };
+
+      imagem.src = url;
+    });
+  }
+
+  function canvasParaPngBlob(canvas) {
+    return new Promise(function (resolver, rejeitar) {
+      try {
+        canvas.toBlob(function (blob) {
+          if (!blob) {
+            rejeitar(new Error("O navegador retornou um PNG vazio."));
+            return;
+          }
+          resolver(blob);
+        }, "image/png");
+      } catch (erro) {
+        rejeitar(erro);
+      }
+    });
+  }
+
   btnBaixarPng.addEventListener("click", async function () {
     var svgEl = elCanvas.querySelector("svg");
-    if (!svgEl) return;
+    if (!svgEl) {
+      mostrarErro("Gere o diagrama antes de baixar o PNG.");
+      return;
+    }
+
+    var carregado = null;
+    var textoOriginalBotao = btnBaixarPng.textContent;
+    btnBaixarPng.disabled = true;
+    btnBaixarPng.textContent = "Gerando PNG...";
 
     try {
-    
-      var svgSemImagens = await prepararSvgParaExportacao(svgEl, true);
-      var svgText = new XMLSerializer().serializeToString(svgSemImagens);
-      var svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
-      var svgUrl = URL.createObjectURL(svgBlob);
+      // Uma única rasterização do SVG. Todas as imagens que puderem ser lidas
+      // são convertidas para data URL ANTES do canvas, evitando canvas tainted.
+      var preparado = await prepararSvgSeguroParaPng(svgEl);
+      var svgText = new XMLSerializer().serializeToString(preparado.svg);
+      carregado = await carregarSvgSerializadoComoImagem(svgText);
 
-      var base = new Image();
+      var vb = svgEl.viewBox && svgEl.viewBox.baseVal;
+      var largura = vb && vb.width ? vb.width :
+        (parseFloat(svgEl.getAttribute("width")) || carregado.imagem.naturalWidth || carregado.imagem.width);
+      var altura = vb && vb.height ? vb.height :
+        (parseFloat(svgEl.getAttribute("height")) || carregado.imagem.naturalHeight || carregado.imagem.height);
 
-      base.onload = async function () {
-        try {
-          var vb = svgEl.viewBox && svgEl.viewBox.baseVal;
-          var viewBox = {
-            x: vb ? vb.x : 0,
-            y: vb ? vb.y : 0,
-            width: vb && vb.width ? vb.width : (parseFloat(svgEl.getAttribute("width")) || base.width),
-            height: vb && vb.height ? vb.height : (parseFloat(svgEl.getAttribute("height")) || base.height)
-          };
+      if (!largura || !altura) throw new Error("Não foi possível determinar o tamanho do diagrama.");
 
-          var escala = 2;
-          var canvasPng = document.createElement("canvas");
-          canvasPng.width = Math.ceil(viewBox.width * escala);
-          canvasPng.height = Math.ceil(viewBox.height * escala);
+      var escala = 2;
+      var canvasPng = document.createElement("canvas");
+      canvasPng.width = Math.max(1, Math.ceil(largura * escala));
+      canvasPng.height = Math.max(1, Math.ceil(altura * escala));
 
-          var contexto = canvasPng.getContext("2d");
-          contexto.fillStyle = getComputedStyle(elCanvas).backgroundColor || "#ffffff";
-          contexto.fillRect(0, 0, canvasPng.width, canvasPng.height);
+      var contexto = canvasPng.getContext("2d");
+      if (!contexto) throw new Error("Canvas 2D não está disponível neste navegador.");
 
-         
-          contexto.drawImage(base, 0, 0, canvasPng.width, canvasPng.height);
+      contexto.save();
+      contexto.setTransform(1, 0, 0, 1, 0, 0);
+      contexto.fillStyle = getComputedStyle(elCanvas).backgroundColor || "#ffffff";
+      contexto.fillRect(0, 0, canvasPng.width, canvasPng.height);
+      contexto.restore();
 
-          await desenharImagensDosEquipamentosNoPng(
-            contexto,
-            svgEl,
-            escala,
-            viewBox
-          );
+      contexto.drawImage(carregado.imagem, 0, 0, canvasPng.width, canvasPng.height);
 
-          canvasPng.toBlob(function (blob) {
-            if (!blob) {
-              mostrarErro("Não foi possível finalizar o PNG.");
-              return;
-            }
-            baixarBlob(blob, "diagrama-grafo.png");
-          }, "image/png");
-        } catch (erroPng) {
-          mostrarErro("Não foi possível exportar o diagrama como PNG.\nDetalhe: " + erroPng.message);
-        } finally {
-          URL.revokeObjectURL(svgUrl);
-        }
-      };
+      var pngBlob = await canvasParaPngBlob(canvasPng);
+      baixarBlob(pngBlob, "diagrama-grafo.png");
 
-      base.onerror = function () {
-        URL.revokeObjectURL(svgUrl);
-        mostrarErro("Não foi possível preparar o diagrama para exportação PNG.");
-      };
+      if (preparado.imagensIgnoradas > 0) {
+        console.warn(
+          preparado.imagensIgnoradas +
+          " imagem(ns) externa(s) não puderam ser incorporadas no PNG. " +
+          "O download foi mantido para não travar a exportação."
+        );
+      }
 
-      base.src = svgUrl;
+      esconderErro();
     } catch (e) {
       mostrarErro("Não foi possível exportar o diagrama como PNG.\nDetalhe: " + e.message);
+    } finally {
+      if (carregado && carregado.url) URL.revokeObjectURL(carregado.url);
+      btnBaixarPng.disabled = false;
+      btnBaixarPng.textContent = textoOriginalBotao;
     }
   });
 
