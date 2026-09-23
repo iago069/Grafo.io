@@ -360,8 +360,8 @@
   .canvas-wrap svg { max-width: 100%; height: auto; transform-origin: center center; animation: aparecer 0.35s ease; user-select: none; pointer-events: auto; }
   .canvas-wrap svg g.node { cursor: grab; }
   .canvas-wrap svg g.node:active, .canvas-wrap svg g.node.selecionado { cursor: grabbing; }
-  .canvas-wrap svg g.edge { cursor: grab; }
-  .canvas-wrap svg g.edge.selecionado { cursor: grabbing; }
+  .canvas-wrap svg g.edge { cursor: default; }
+  .canvas-wrap svg g.edge.selecionado { cursor: default; }
   .canvas-wrap svg g.node.selecionado polygon, .canvas-wrap svg g.node.selecionado ellipse {
     stroke: var(--accent); stroke-width: 2.6px; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 75%, transparent));
   }
@@ -757,6 +757,382 @@
     });
   }
 
+  // ---------- Roteamento ortogonal automático dos cabos — V3 portas centralizadas ----------
+  // Cada conexão recebe um corredor próprio. O caminho final usa somente
+  // segmentos horizontais/verticais e é recalculado quando um equipamento move.
+  var CONFIG_ROTEAMENTO_CABOS = {
+    espaco: 12,
+    margemPorta: 14,
+    margemEquipamento: 10,
+    tentativas: 80
+  };
+  var roteamentoCabosFrame = null;
+
+  function numeroSvg(valor) {
+    var n = Number(valor);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function extrairExtremosDoPath(d) {
+    var pares = [];
+    var re = /(-?\d*\.?\d+(?:e[-+]?\d+)?),(-?\d*\.?\d+(?:e[-+]?\d+)?)/gi;
+    var m;
+    while ((m = re.exec(String(d || "")))) pares.push({ x: Number(m[1]), y: Number(m[2]) });
+    if (!pares.length) return null;
+    return { inicio: pares[0], fim: pares[pares.length - 1] };
+  }
+
+  function obterNodePorId(svg, id) {
+    var encontrado = null;
+    svg.querySelectorAll("g.node").forEach(function (node) {
+      if (encontrado) return;
+      var titulo = node.querySelector("title");
+      if (titulo && titulo.textContent === id) encontrado = node;
+    });
+    return encontrado;
+  }
+
+  function obterTranslateDoNode(svg, id) {
+    var node = obterNodePorId(svg, id);
+    if (!node) return { x: 0, y: 0 };
+    var transform = node.getAttribute("transform") || "";
+    var m = /translate\(\s*(-?\d*\.?\d+)\s*[, ]\s*(-?\d*\.?\d+)\s*\)/.exec(transform);
+    return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: 0, y: 0 };
+  }
+
+  function obterCaixasDosEquipamentos(svg) {
+    var caixas = [];
+    svg.querySelectorAll("g.node").forEach(function (node) {
+      var titulo = node.querySelector("title");
+      if (!titulo) return;
+      try {
+        var b = node.getBBox();
+        var t = obterTranslateDoNode(svg, titulo.textContent);
+        caixas.push({
+          id: titulo.textContent,
+          x: b.x + t.x,
+          y: b.y + t.y,
+          width: b.width,
+          height: b.height
+        });
+      } catch (e) {}
+    });
+    return caixas;
+  }
+
+  function obterPontosExatosDasPortas(svg) {
+    // O Graphviz nem sempre entrega o primeiro/último ponto do path exatamente
+    // no centro visual da célula PORT (especialmente com labels HTML + rankdir=LR).
+    // Por isso os pontos de conexão são calculados diretamente pelos retângulos
+    // visíveis das portas no g.node. Assim o cabo sempre nasce/termina no centro
+    // da borda externa da caixa da porta.
+    var estrutura = {};
+    var pontos = {};
+
+    estado.equipamentos.forEach(function (eq) {
+      estrutura[eq.id] = { entrada: [], saida: [] };
+    });
+
+    estado.conexoes.forEach(function (conexao, indice) {
+      if (estrutura[conexao.de]) estrutura[conexao.de].saida.push(indice);
+      if (estrutura[conexao.para]) estrutura[conexao.para].entrada.push(indice);
+    });
+
+    Object.keys(estrutura).forEach(function (idEquipamento) {
+      var node = obterNodePorId(svg, idEquipamento);
+      if (!node) return;
+
+      var bboxNode;
+      try { bboxNode = node.getBBox(); } catch (e) { return; }
+      var translacao = obterTranslateDoNode(svg, idEquipamento);
+      var centroX = bboxNode.x + bboxNode.width / 2;
+
+      // As únicas caixas com borda visível dentro do node são as TDs das portas.
+      // O Graphviz gera dois polygons por célula (fundo + borda); pegamos somente
+      // o polygon cuja borda não é transparente.
+      var caixasPorta = Array.prototype.slice.call(node.querySelectorAll("polygon")).map(function (poligono) {
+        var stroke = String(poligono.getAttribute("stroke") || "").toLowerCase();
+        if (!stroke || stroke === "none" || stroke === "transparent") return null;
+        try {
+          var b = poligono.getBBox();
+          // Filtro de segurança: portas do projeto são pequenas e retangulares.
+          if (b.width < 30 || b.width > 130 || b.height < 8 || b.height > 50) return null;
+          return { poligono: poligono, bbox: b, cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
+        } catch (e) { return null; }
+      }).filter(Boolean);
+
+      var entradasVisuais = caixasPorta.filter(function (item) { return item.cx < centroX; });
+      var saidasVisuais = caixasPorta.filter(function (item) { return item.cx >= centroX; });
+
+      // SVG: menor Y = mais acima. A ordem visual precisa ser a mesma ordem
+      // das portas mostradas na tabela, independentemente de como o Graphviz
+      // resolveu internamente tailport/headport.
+      entradasVisuais.sort(function (a, b) { return a.cy - b.cy; });
+      saidasVisuais.sort(function (a, b) { return a.cy - b.cy; });
+
+      estrutura[idEquipamento].entrada.forEach(function (indiceConexao, ordem) {
+        var caixa = entradasVisuais[ordem];
+        if (!caixa) return;
+        if (!pontos[indiceConexao]) pontos[indiceConexao] = {};
+        pontos[indiceConexao].fim = {
+          // Entrada: conectar no CENTRO da borda esquerda da caixa.
+          x: caixa.bbox.x + translacao.x,
+          y: caixa.cy + translacao.y
+        };
+      });
+
+      estrutura[idEquipamento].saida.forEach(function (indiceConexao, ordem) {
+        var caixa = saidasVisuais[ordem];
+        if (!caixa) return;
+        if (!pontos[indiceConexao]) pontos[indiceConexao] = {};
+        pontos[indiceConexao].inicio = {
+          // Saída: conectar no CENTRO da borda direita da caixa.
+          x: caixa.bbox.x + caixa.bbox.width + translacao.x,
+          y: caixa.cy + translacao.y
+        };
+      });
+    });
+
+    return pontos;
+  }
+
+  function intervalosSobrepoem(a1, a2, b1, b2, folga) {
+    var amin = Math.min(a1, a2), amax = Math.max(a1, a2);
+    var bmin = Math.min(b1, b2), bmax = Math.max(b1, b2);
+    return amax + folga >= bmin && bmax + folga >= amin;
+  }
+
+  function verticalCruzaCaixa(x, y1, y2, caixa, margem) {
+    return x >= caixa.x - margem && x <= caixa.x + caixa.width + margem &&
+      intervalosSobrepoem(y1, y2, caixa.y, caixa.y + caixa.height, 0);
+  }
+
+  function horizontalCruzaCaixa(y, x1, x2, caixa, margem) {
+    return y >= caixa.y - margem && y <= caixa.y + caixa.height + margem &&
+      intervalosSobrepoem(x1, x2, caixa.x, caixa.x + caixa.width, 0);
+  }
+
+  function corredorVerticalLivre(x, rota, ocupados, caixas) {
+    var espaco = CONFIG_ROTEAMENTO_CABOS.espaco;
+    for (var i = 0; i < ocupados.length; i++) {
+      var o = ocupados[i];
+      if (Math.abs(o.x - x) < espaco && intervalosSobrepoem(rota.inicio.y, rota.fim.y, o.y1, o.y2, espaco * 0.2)) return false;
+    }
+    for (var j = 0; j < caixas.length; j++) {
+      var c = caixas[j];
+      if (c.id === rota.conexao.de || c.id === rota.conexao.para) continue;
+      if (verticalCruzaCaixa(x, rota.inicio.y, rota.fim.y, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
+      if (horizontalCruzaCaixa(rota.inicio.y, rota.inicio.x, x, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
+      if (horizontalCruzaCaixa(rota.fim.y, x, rota.fim.x, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
+    }
+    return true;
+  }
+
+  function corredorHorizontalLivre(y, rota, ocupados, caixas) {
+    var espaco = CONFIG_ROTEAMENTO_CABOS.espaco;
+    for (var i = 0; i < ocupados.length; i++) {
+      var o = ocupados[i];
+      if (Math.abs(o.y - y) < espaco && intervalosSobrepoem(rota.inicio.x, rota.fim.x, o.x1, o.x2, espaco * 0.2)) return false;
+    }
+    for (var j = 0; j < caixas.length; j++) {
+      var c = caixas[j];
+      if (c.id === rota.conexao.de || c.id === rota.conexao.para) continue;
+      if (horizontalCruzaCaixa(y, rota.inicio.x, rota.fim.x, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
+      if (verticalCruzaCaixa(rota.inicio.x, rota.inicio.y, y, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
+      if (verticalCruzaCaixa(rota.fim.x, y, rota.fim.y, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
+    }
+    return true;
+  }
+
+  function encontrarCorredorVertical(preferido, rota, ocupados, caixas, minimo, maximo) {
+    var passo = CONFIG_ROTEAMENTO_CABOS.espaco;
+    var candidatos = [preferido];
+    for (var i = 1; i <= CONFIG_ROTEAMENTO_CABOS.tentativas; i++) {
+      candidatos.push(preferido - i * passo);
+      candidatos.push(preferido + i * passo);
+    }
+    for (var j = 0; j < candidatos.length; j++) {
+      var x = candidatos[j];
+      if (minimo < maximo && (x < minimo || x > maximo)) continue;
+      if (corredorVerticalLivre(x, rota, ocupados, caixas)) return x;
+    }
+    // fallback: ainda mantém um caminho ortogonal e exclusivo.
+    return preferido;
+  }
+
+  function encontrarCorredorHorizontal(preferido, rota, ocupados, caixas, minimo, maximo) {
+    var passo = CONFIG_ROTEAMENTO_CABOS.espaco;
+    var candidatos = [preferido];
+    for (var i = 1; i <= CONFIG_ROTEAMENTO_CABOS.tentativas; i++) {
+      candidatos.push(preferido - i * passo);
+      candidatos.push(preferido + i * passo);
+    }
+    for (var j = 0; j < candidatos.length; j++) {
+      var y = candidatos[j];
+      if (minimo < maximo && (y < minimo || y > maximo)) continue;
+      if (corredorHorizontalLivre(y, rota, ocupados, caixas)) return y;
+    }
+    return preferido;
+  }
+
+  function posicionarRotuloDaAresta(aresta, rota, corredor, direcao) {
+    var textos = aresta.querySelectorAll("text");
+    if (!textos.length) return;
+    // Em cada g.edge o Graphviz mantém apenas o label do cabo; os nomes das
+    // portas pertencem ao g.node. Reposicionamos o label no maior trecho reto.
+    var texto = textos[0];
+    texto.removeAttribute("transform");
+    texto.removeAttribute("data-move-x");
+    texto.removeAttribute("data-move-y");
+    if (direcao === "TB") {
+      var d1 = Math.abs(corredor - rota.inicio.y);
+      var d2 = Math.abs(rota.fim.y - corredor);
+      var x = (rota.inicio.x + rota.fim.x) / 2;
+      var y = d1 >= d2 ? (rota.inicio.y + corredor) / 2 : (corredor + rota.fim.y) / 2;
+      texto.setAttribute("x", x.toFixed(2));
+      texto.setAttribute("y", (y - 4).toFixed(2));
+      texto.setAttribute("text-anchor", "middle");
+    } else {
+      var h1 = Math.abs(corredor - rota.inicio.x);
+      var h2 = Math.abs(rota.fim.x - corredor);
+      var tx = h1 >= h2 ? (rota.inicio.x + corredor) / 2 : (corredor + rota.fim.x) / 2;
+      var ty = h1 >= h2 ? rota.inicio.y : rota.fim.y;
+      texto.setAttribute("x", tx.toFixed(2));
+      texto.setAttribute("y", (ty - 5).toFixed(2));
+      texto.setAttribute("text-anchor", "middle");
+    }
+  }
+
+  function roteiarUmaRotaLR(rota, indiceNoGrupo, tamanhoGrupo, ocupados, caixas) {
+    var margem = CONFIG_ROTEAMENTO_CABOS.margemPorta;
+    var passo = CONFIG_ROTEAMENTO_CABOS.espaco;
+    var direita = rota.fim.x >= rota.inicio.x;
+    var minimo = Math.min(rota.inicio.x, rota.fim.x) + margem;
+    var maximo = Math.max(rota.inicio.x, rota.fim.x) - margem;
+    var preferido;
+
+    // Para várias origens chegando ao mesmo equipamento, cria o efeito em
+    // "escada": a conexão superior usa o corredor mais próximo do destino e
+    // as próximas recuam um espaçamento constante, sem ficarem sobrepostas.
+    if (direita) preferido = maximo - indiceNoGrupo * passo;
+    else preferido = minimo + indiceNoGrupo * passo;
+
+    if (minimo >= maximo) preferido = (rota.inicio.x + rota.fim.x) / 2 + (indiceNoGrupo - (tamanhoGrupo - 1) / 2) * passo;
+    var corredor = encontrarCorredorVertical(preferido, rota, ocupados, caixas, minimo, maximo);
+    ocupados.push({ x: corredor, y1: rota.inicio.y, y2: rota.fim.y });
+
+    rota.path.setAttribute("d",
+      "M" + rota.inicio.x.toFixed(2) + "," + rota.inicio.y.toFixed(2) +
+      " H" + corredor.toFixed(2) +
+      " V" + rota.fim.y.toFixed(2) +
+      " H" + rota.fim.x.toFixed(2)
+    );
+    posicionarRotuloDaAresta(rota.aresta, rota, corredor, "LR");
+  }
+
+  function roteiarUmaRotaTB(rota, indiceNoGrupo, tamanhoGrupo, ocupados, caixas) {
+    var margem = CONFIG_ROTEAMENTO_CABOS.margemPorta;
+    var passo = CONFIG_ROTEAMENTO_CABOS.espaco;
+    var baixo = rota.fim.y >= rota.inicio.y;
+    var minimo = Math.min(rota.inicio.y, rota.fim.y) + margem;
+    var maximo = Math.max(rota.inicio.y, rota.fim.y) - margem;
+    var preferido = baixo ? maximo - indiceNoGrupo * passo : minimo + indiceNoGrupo * passo;
+    if (minimo >= maximo) preferido = (rota.inicio.y + rota.fim.y) / 2 + (indiceNoGrupo - (tamanhoGrupo - 1) / 2) * passo;
+    var corredor = encontrarCorredorHorizontal(preferido, rota, ocupados, caixas, minimo, maximo);
+    ocupados.push({ y: corredor, x1: rota.inicio.x, x2: rota.fim.x });
+
+    rota.path.setAttribute("d",
+      "M" + rota.inicio.x.toFixed(2) + "," + rota.inicio.y.toFixed(2) +
+      " V" + corredor.toFixed(2) +
+      " H" + rota.fim.x.toFixed(2) +
+      " V" + rota.fim.y.toFixed(2)
+    );
+    posicionarRotuloDaAresta(rota.aresta, rota, corredor, "TB");
+  }
+
+  function rotearCabosOrtogonalmente() {
+    var svg = elCanvas.querySelector("svg");
+    if (!svg) return;
+    var arestas = Array.prototype.slice.call(svg.querySelectorAll("g.edge"));
+    if (!arestas.length) return;
+    var caixas = obterCaixasDosEquipamentos(svg);
+    var pontosPortas = obterPontosExatosDasPortas(svg);
+    var rotas = [];
+
+    estado.conexoes.forEach(function (conexao, indice) {
+      var aresta = svg.querySelector('g.edge[id="edge_' + indice + '"]') || arestas[indice];
+      if (!aresta) return;
+      aresta.removeAttribute("transform");
+      var path = aresta.querySelector("path");
+      if (!path) return;
+
+      // Primeiro tenta usar o centro EXATO das caixas de porta visíveis.
+      // Só usa o path original do Graphviz como fallback caso alguma porta
+      // não possa ser identificada no SVG.
+      var pontoVisual = pontosPortas[indice] || {};
+      var inicio = pontoVisual.inicio;
+      var fim = pontoVisual.fim;
+
+      if (!inicio || !fim) {
+        if (!path.getAttribute("data-base-inicio-x")) {
+          var extremos = extrairExtremosDoPath(path.getAttribute("d"));
+          if (!extremos) return;
+          path.setAttribute("data-base-inicio-x", extremos.inicio.x);
+          path.setAttribute("data-base-inicio-y", extremos.inicio.y);
+          path.setAttribute("data-base-fim-x", extremos.fim.x);
+          path.setAttribute("data-base-fim-y", extremos.fim.y);
+        }
+
+        var tOrigem = obterTranslateDoNode(svg, conexao.de);
+        var tDestino = obterTranslateDoNode(svg, conexao.para);
+        if (!inicio) {
+          inicio = {
+            x: numeroSvg(path.getAttribute("data-base-inicio-x")) + tOrigem.x,
+            y: numeroSvg(path.getAttribute("data-base-inicio-y")) + tOrigem.y
+          };
+        }
+        if (!fim) {
+          fim = {
+            x: numeroSvg(path.getAttribute("data-base-fim-x")) + tDestino.x,
+            y: numeroSvg(path.getAttribute("data-base-fim-y")) + tDestino.y
+          };
+        }
+      }
+
+      rotas.push({ indice: indice, conexao: conexao, aresta: aresta, path: path, inicio: inicio, fim: fim });
+    });
+
+    var direcao = selDirecao.value === "TB" ? "TB" : "LR";
+    var grupos = {};
+    rotas.forEach(function (rota) {
+      // Agrupa pelo equipamento de destino: este é o caso clássico de vários
+      // enlaces convergindo para um switch/OLT, como na referência enviada.
+      var chave = rota.conexao.para + "|" + direcao;
+      if (!grupos[chave]) grupos[chave] = [];
+      grupos[chave].push(rota);
+    });
+
+    var ocupados = [];
+    Object.keys(grupos).forEach(function (chave) {
+      var grupo = grupos[chave];
+      grupo.sort(function (a, b) {
+        return direcao === "TB" ? a.inicio.x - b.inicio.x : a.inicio.y - b.inicio.y;
+      });
+      grupo.forEach(function (rota, indice) {
+        if (direcao === "TB") roteiarUmaRotaTB(rota, indice, grupo.length, ocupados, caixas);
+        else roteiarUmaRotaLR(rota, indice, grupo.length, ocupados, caixas);
+      });
+    });
+  }
+
+  function solicitarRoteamentoCabos() {
+    if (roteamentoCabosFrame) cancelAnimationFrame(roteamentoCabosFrame);
+    roteamentoCabosFrame = requestAnimationFrame(function () {
+      roteamentoCabosFrame = null;
+      rotearCabosOrtogonalmente();
+    });
+  }
+
   function aplicarDeslocamentosNasArestas() {
     estado.equipamentos.forEach(function (equipamento) {
       if (!equipamento.deslocamento) return;
@@ -801,37 +1177,9 @@
   }
 
   function atualizarArestasDoEquipamento(id, deslocamentoX, deslocamentoY) {
-    var svg = elCanvas.querySelector("svg");
-    if (!svg) return;
-    svg.querySelectorAll("g.edge").forEach(function (aresta) {
-      var titulo = aresta.querySelector("title");
-      if (!titulo) return;
-      var partes = titulo.textContent.split("->");
-      if (partes.length !== 2) return;
-      var moveOrigem = partes[0] === id;
-      var moveDestino = partes[1] === id;
-      if (!moveOrigem && !moveDestino) return;
-      var conexao = estado.conexoes.find(function (item) { return item.de === partes[0] && item.para === partes[1]; });
-      var caminho = aresta.querySelector("path");
-      if (caminho) caminho.setAttribute("d", moverParesSvg(caminho.getAttribute("d") || "", deslocamentoX, deslocamentoY, moveOrigem, moveDestino));
-      if (moveDestino) {
-        aresta.querySelectorAll("polygon").forEach(function (poligono) {
-          var pontos = poligono.getAttribute("points") || "";
-          poligono.setAttribute("points", pontos.replace(/(-?\d*\.?\d+),(-?\d*\.?\d+)/g, function (_, x, y) {
-            return (Number(x) + deslocamentoX).toFixed(2) + "," + (Number(y) + deslocamentoY).toFixed(2);
-          }));
-        });
-      }
-      if (conexao) {
-        var rotuloCabo = conexao.tipo ? conexao.tipo + (conexao.potencia ? " · " + conexao.potencia : "") : (conexao.potencia || "");
-        aresta.querySelectorAll("text").forEach(function (texto) {
-          var conteudo = texto.textContent.trim();
-          if (conexao.saida && conteudo === conexao.saida && moveOrigem) deslocarTextoSvg(texto, deslocamentoX, deslocamentoY);
-          else if (conexao.chegada && conteudo === conexao.chegada && moveDestino) deslocarTextoSvg(texto, deslocamentoX, deslocamentoY);
-          else if (rotuloCabo && conteudo === rotuloCabo) deslocarTextoSvg(texto, deslocamentoX * 0.5, deslocamentoY * 0.5);
-        });
-      }
-    });
+    // O caminho inteiro é recalculado a partir das portas atuais. Isso evita
+    // diagonais, trechos soltos e sobreposição após mover um equipamento.
+    solicitarRoteamentoCabos();
   }
 
   function ativarArrasteDosEquipamentos() {
@@ -1773,7 +2121,16 @@
   }
 
   function gerarDot(dados, direcao) {
-    var linhas = ["digraph G {", '  rankdir=' + direcao + ';', '  splines=polyline;', '  concentrate=false;', '  overlap=false;', '  nodesep=0.65;', '  ranksep=0.9;', '  pad=0.18;', '  bgcolor="transparent";',
+    var contagemPortas = {};
+    dados.equipamentos.forEach(function (eq) { contagemPortas[eq.id] = 0; });
+    dados.conexoes.forEach(function (c) {
+      if (contagemPortas[c.de] != null) contagemPortas[c.de]++;
+      if (contagemPortas[c.para] != null) contagemPortas[c.para]++;
+    });
+    var maiorQtdPortas = Math.max.apply(null, [1].concat(Object.keys(contagemPortas).map(function (id) { return contagemPortas[id]; })));
+    // Reserva espaço horizontal/vertical suficiente para os corredores de cabo.
+    var ranksepAuto = Math.max(1.15, Math.min(4.5, 0.95 + maiorQtdPortas * 0.16));
+    var linhas = ["digraph G {", '  rankdir=' + direcao + ';', '  splines=ortho;', '  concentrate=false;', '  overlap=false;', '  nodesep=0.75;', '  ranksep=' + ranksepAuto.toFixed(2) + ';', '  pad=0.18;', '  bgcolor="transparent";',
       '  node [shape=box, style="filled", fontname="Helvetica", fontsize=10, margin="0.18,0.12", color="#547184", penwidth=1.1];',
       '  edge [fontname="Helvetica", fontsize=8, color="#263746", fontcolor="#344D61", penwidth=1.5, arrowhead=none, labeldistance=1.25, labelangle=0, labelfontname="Helvetica", labelfontsize=8];'];
     var portasPorEquipamento = {};
@@ -1853,7 +2210,7 @@
         var saida = portas.saida[portaIndice];
         linhasPortas += '<TR>' +
           (entrada ? celulaPorta(entrada, "entrada", layoutPortas) : '<TD BORDER="0" WIDTH="' + CONFIG_PORTA.largura + '" HEIGHT="' + layoutPortas.alturaPorta + '" FIXEDSIZE="TRUE"></TD>') +
-          (portaIndice === 0 ? '<TD BORDER="0" CELLPADDING="0" WIDTH="120" ROWSPAN="' + totalPortas + '" ALIGN="CENTER" VALIGN="MIDDLE"></TD>' : '') +
+          (portaIndice === 0 ? '<TD BORDER="0" CELLPADDING="0" WIDTH="120" HEIGHT="' + layoutPortas.alturaEquipamento + '" ROWSPAN="' + totalPortas + '" ALIGN="CENTER" VALIGN="MIDDLE"></TD>' : '') +
           (saida ? celulaPorta(saida, "saida", layoutPortas) : '<TD BORDER="0" WIDTH="' + CONFIG_PORTA.largura + '" HEIGHT="' + layoutPortas.alturaPorta + '" FIXEDSIZE="TRUE"></TD>') +
           '</TR>';
       }
@@ -1888,7 +2245,7 @@
       var portas = ', tailport="out_' + indice + '", headport="in_' + indice + '"';
       var capacidade = c.potencia ? " · " + c.potencia : "";
       var rotuloTexto = c.tipo ? c.tipo + capacidade : capacidade.replace(/^ · /, "");
-      var rotulo = ' [label="' + escapar(rotuloTexto) + '", color="' + corConexao + '", fontcolor="#34495A", penwidth=' + Math.max(1, grossura) + estilo + portas + ']';
+      var rotulo = ' [id="edge_' + indice + '", label="' + escapar(rotuloTexto) + '", color="' + corConexao + '", fontcolor="#34495A", penwidth=' + Math.max(1, grossura) + estilo + portas + ']';
       linhas.push('  "' + escapar(c.de) + '" -> "' + escapar(c.para) + '"' + rotulo + ';');
     });
     linhas.push("}");
@@ -1911,39 +2268,115 @@
   function aplicarImagensNoSvg(dados) {
     var svgEl = elCanvas.querySelector("svg");
     if (!svgEl) return;
+
     var porId = {};
     dados.equipamentos.forEach(function (eq) {
       var imagem = eq.imagem || imagemDoIcone(eq.icone);
       if (imagem) porId[eq.id] = imagem;
     });
-    var nodes = svgEl.querySelectorAll("g.node");
-    nodes.forEach(function (g) {
+
+    function bboxSeguro(elemento) {
+      try { return elemento && elemento.getBBox ? elemento.getBBox() : null; }
+      catch (e) { return null; }
+    }
+
+    function normalizarTexto(valor) {
+      return String(valor || "").replace(/\s+/g, " ").trim();
+    }
+
+    svgEl.querySelectorAll("g.node").forEach(function (g) {
       var titulo = g.querySelector("title");
       if (!titulo) return;
+
       var id = titulo.textContent;
-      if (!porId[id]) return;
+      var origemImagem = porId[id];
+      if (!origemImagem) return;
+
+      var equipamento = dados.equipamentos.find(function (eq) { return eq.id === id; });
+      if (!equipamento) return;
+
       try {
-        var bbox = g.getBBox();
-        var equipamentoImagem = dados.equipamentos.find(function (eq) { return eq.id === id; });
-        var tam = equipamentoImagem && imagemDoIcone(equipamentoImagem.icone) ? 84 : 18;
+        // Remove imagem anterior caso a função seja chamada mais de uma vez.
+        g.querySelectorAll("image[data-equip-img='1']").forEach(function (imagemAntiga) {
+          imagemAntiga.remove();
+        });
+
+        var bboxNode = g.getBBox();
+        var textos = Array.prototype.slice.call(g.querySelectorAll("text"));
+        var nomeEsperado = normalizarTexto(equipamento.nome || equipamento.id);
+        var modeloEsperado = normalizarTexto(equipamento.modelo || "");
+        var tipoEsperado = normalizarTexto(equipamento.tipo || "Equipamento");
+        var statusEsperado = normalizarTexto((marcadorStatus(equipamento.status || "ativo") + " " + (equipamento.status || "ativo").toUpperCase()));
+
+        var cabecalho = textos.filter(function (texto) {
+          var valor = normalizarTexto(texto.textContent);
+          return valor === nomeEsperado || (modeloEsperado && valor === modeloEsperado) || valor === tipoEsperado;
+        });
+        var statusTexto = textos.find(function (texto) {
+          return normalizarTexto(texto.textContent) === statusEsperado;
+        });
+
+        var fundoCabecalho = bboxNode.y + Math.min(36, bboxNode.height * 0.28);
+        cabecalho.forEach(function (texto) {
+          var box = bboxSeguro(texto);
+          if (box) fundoCabecalho = Math.max(fundoCabecalho, box.y + box.height);
+        });
+
+        var topoStatus = bboxNode.y + bboxNode.height - Math.min(22, bboxNode.height * 0.18);
+        var boxStatus = bboxSeguro(statusTexto);
+        if (boxStatus) topoStatus = boxStatus.y;
+
+        // A imagem pertence somente à área central do equipamento.
+        // Assim ela nunca cobre NOME / MODELO / TIPO / STATUS.
+        var areaTopo = fundoCabecalho + 5;
+        var areaBaixo = topoStatus - 5;
+        var areaAltura = Math.max(16, areaBaixo - areaTopo);
+
+        var ehCatalogo = !!imagemDoIcone(equipamento.icone);
+        var tamanhoDesejado = ehCatalogo ? 84 : 48;
+        var tam = Math.max(12, Math.min(tamanhoDesejado, areaAltura - 4, 108));
+
+        var centroX = bboxNode.x + bboxNode.width / 2;
+        var x = centroX - tam / 2;
+        var y = areaTopo + (areaAltura - tam) / 2;
+
         var img = document.createElementNS("http://www.w3.org/2000/svg", "image");
-        img.setAttributeNS("http://www.w3.org/1999/xlink", "href", porId[id]);
-        img.setAttribute("href", porId[id]);
-        img.setAttribute("x", bbox.x + (bbox.width - tam) / 2);
-        img.setAttribute("y", bbox.y + (bbox.height - tam) / 2);
+        img.setAttribute("data-equip-img", "1");
+        img.setAttributeNS("http://www.w3.org/1999/xlink", "href", origemImagem);
+        img.setAttribute("href", origemImagem);
+        img.setAttribute("x", x);
+        img.setAttribute("y", y);
         img.setAttribute("width", tam);
         img.setAttribute("height", tam);
-        img.setAttribute("preserveAspectRatio", "xMidYMid slice");
-        var clipId = "clip-" + id.replace(/[^a-zA-Z0-9]/g, "");
-        var defs = svgEl.querySelector("defs") || svgEl.insertBefore(document.createElementNS("http://www.w3.org/2000/svg", "defs"), svgEl.firstChild);
+        img.setAttribute("preserveAspectRatio", "xMidYMid meet");
+        img.setAttribute("pointer-events", "none");
+
+        var clipId = "clip-" + id.replace(/[^a-zA-Z0-9]/g, "") + "-equip";
+        var defs = svgEl.querySelector("defs");
+        if (!defs) {
+          defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+          svgEl.insertBefore(defs, svgEl.firstChild);
+        }
+        var clipAntigo = defs.querySelector("#" + clipId);
+        if (clipAntigo) clipAntigo.remove();
+
         var clip = document.createElementNS("http://www.w3.org/2000/svg", "clipPath");
         clip.setAttribute("id", clipId);
         var rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        rect.setAttribute("x", bbox.x + (bbox.width - tam) / 2); rect.setAttribute("y", bbox.y + (bbox.height - tam) / 2);
-        rect.setAttribute("width", tam); rect.setAttribute("height", tam); rect.setAttribute("rx", 3);
-        clip.appendChild(rect); defs.appendChild(clip);
+        rect.setAttribute("x", x);
+        rect.setAttribute("y", y);
+        rect.setAttribute("width", tam);
+        rect.setAttribute("height", tam);
+        rect.setAttribute("rx", 3);
+        clip.appendChild(rect);
+        defs.appendChild(clip);
         img.setAttribute("clip-path", "url(#" + clipId + ")");
-        g.appendChild(img);
+
+        // Insere ANTES dos textos. Mesmo em um caso extremo de sobreposição,
+        // nome/modelo/tipo/status/portas continuam renderizados por cima da imagem.
+        var primeiroTexto = g.querySelector("text");
+        if (primeiroTexto) g.insertBefore(img, primeiroTexto);
+        else g.appendChild(img);
       } catch (err) {}
     });
   }
@@ -1963,10 +2396,8 @@
       elCanvas.innerHTML = svg;
       aplicarCanvasView();
       aplicarPosicoesEquipamentos();
-      aplicarDeslocamentosNasArestas();
+      rotearCabosOrtogonalmente();
       ativarArrasteDosEquipamentos();
-      aplicarPosicoesDosCabos();
-      ativarArrasteDosCabos();
       aplicarImagensNoSvg(estado);
       atualizarLegenda(estado);
       btnCopiar.disabled = false;
@@ -1990,86 +2421,264 @@
     } catch (e) {}
   });
 
-  async function prepararSvgParaExportacao(svgEl) {
-    var copia = svgEl.cloneNode(true);
-    var imagens = Array.prototype.slice.call(copia.querySelectorAll("image"));
-    await Promise.all(imagens.map(async function (imagem) {
-      var origem = imagem.getAttribute("href") || imagem.getAttributeNS("http://www.w3.org/1999/xlink", "href");
-      if (!origem || origem.indexOf("data:") === 0) return;
+  function blobParaDataUrl(blob) {
+    return new Promise(function (resolver, rejeitar) {
+      var leitor = new FileReader();
+      leitor.onload = function () { resolver(leitor.result); };
+      leitor.onerror = rejeitar;
+      leitor.readAsDataURL(blob);
+    });
+  }
+
+  async function fonteImagemComoDataUrl(origem, imagemViva) {
+    if (!origem) return "";
+    if (/^data:/i.test(origem)) return origem;
+
+    var absoluta;
+    try { absoluta = new URL(origem, document.baseURI).href; }
+    catch (e) { absoluta = origem; }
+
+    // Caminho principal: converte o arquivo da imagem para data URL.
+    // Isso evita que um SVG carregado via blob: perca imagens relativas.
+    try {
+      var resposta = await fetch(absoluta, { cache: "force-cache" });
+      if (!resposta.ok && resposta.status !== 0) throw new Error("HTTP " + resposta.status);
+      return await blobParaDataUrl(await resposta.blob());
+    } catch (erroFetch) {}
+
+    // Fallback importante para arquivos locais/file://:
+    // tenta rasterizar a própria imagem que já está visível no SVG.
+    if (imagemViva) {
       try {
-        var resposta = await fetch(new URL(origem, document.baseURI).href);
-        var blob = await resposta.blob();
-        var leitor = new FileReader();
-        var dataUrl = await new Promise(function (resolver, rejeitar) {
-          leitor.onload = function () { resolver(leitor.result); };
-          leitor.onerror = rejeitar;
-          leitor.readAsDataURL(blob);
-        });
+        var bbox = imagemViva.getBBox();
+        var largura = Math.max(1, Math.ceil(bbox.width || Number(imagemViva.getAttribute("width")) || 1));
+        var altura = Math.max(1, Math.ceil(bbox.height || Number(imagemViva.getAttribute("height")) || 1));
+        var canvasTmp = document.createElement("canvas");
+        canvasTmp.width = largura * 2;
+        canvasTmp.height = altura * 2;
+        var ctxTmp = canvasTmp.getContext("2d");
+        ctxTmp.drawImage(imagemViva, 0, 0, canvasTmp.width, canvasTmp.height);
+        return canvasTmp.toDataURL("image/png");
+      } catch (erroCanvas) {}
+    }
+
+    // Último fallback. Funciona se a URL continuar acessível no contexto de exportação.
+    return absoluta;
+  }
+
+  async function prepararSvgParaExportacao(svgEl, removerImagens) {
+    var copia = svgEl.cloneNode(true);
+
+    
+    copia.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    copia.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+
+    
+    copia.style.transform = "none";
+    copia.style.transformOrigin = "";
+
+    var imagensVivas = Array.prototype.slice.call(svgEl.querySelectorAll("image"));
+    var imagensCopia = Array.prototype.slice.call(copia.querySelectorAll("image"));
+
+    await Promise.all(imagensCopia.map(async function (imagem, indice) {
+      if (removerImagens) {
+        imagem.remove();
+        return;
+      }
+
+      var origem = imagem.getAttribute("href") ||
+        imagem.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+
+      if (!origem && imagensVivas[indice]) {
+        origem = imagensVivas[indice].getAttribute("href") ||
+          imagensVivas[indice].getAttributeNS("http://www.w3.org/1999/xlink", "href");
+      }
+
+      if (!origem) return;
+
+      try {
+        var dataUrl = await fonteImagemComoDataUrl(origem, imagensVivas[indice]);
+        if (!dataUrl) return;
         imagem.setAttribute("href", dataUrl);
-        imagem.setAttributeNS("http://www.w3.org/1999/xlink", "href", dataUrl);
-      } catch (erroImagem) {}
+        imagem.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", dataUrl);
+      } catch (erroImagem) {
+        console.warn("Não foi possível incorporar imagem na exportação:", origem, erroImagem);
+      }
     }));
+
     return copia;
+  }
+
+  function baixarBlob(blob, nome) {
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = nome;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+  }
+
+  function carregarImagemParaCanvas(origem) {
+    return new Promise(async function (resolver, rejeitar) {
+      var fonte = origem;
+      try { fonte = await fonteImagemComoDataUrl(origem, null); } catch (e) {}
+
+      var img = new Image();
+      img.onload = function () { resolver(img); };
+      img.onerror = function () { rejeitar(new Error("Falha ao carregar imagem: " + origem)); };
+      img.src = fonte;
+    });
+  }
+
+  async function desenharImagensDosEquipamentosNoPng(contexto, svgEl, escala, viewBox) {
+    var imagensSvg = Array.prototype.slice.call(svgEl.querySelectorAll("image"));
+
+    for (var i = 0; i < imagensSvg.length; i++) {
+      var imagemSvg = imagensSvg[i];
+      var origem = imagemSvg.getAttribute("href") ||
+        imagemSvg.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+
+      if (!origem) continue;
+
+      var raster = null;
+      try {
+      
+        raster = imagemSvg;
+        var teste = document.createElement("canvas");
+        teste.width = 1;
+        teste.height = 1;
+        teste.getContext("2d").drawImage(imagemSvg, 0, 0, 1, 1);
+      } catch (e) {
+        raster = await carregarImagemParaCanvas(origem);
+      }
+
+      var x = numeroSvg(imagemSvg.getAttribute("x"));
+      var y = numeroSvg(imagemSvg.getAttribute("y"));
+      var largura = numeroSvg(imagemSvg.getAttribute("width"));
+      var altura = numeroSvg(imagemSvg.getAttribute("height"));
+      if (!largura || !altura) continue;
+
+      var matriz = imagemSvg.getCTM();
+      if (!matriz) continue;
+
+      contexto.save();
+
+      
+      contexto.setTransform(
+        escala * matriz.a,
+        escala * matriz.b,
+        escala * matriz.c,
+        escala * matriz.d,
+        escala * (matriz.e - viewBox.x),
+        escala * (matriz.f - viewBox.y)
+      );
+
+      contexto.beginPath();
+      var raio = Math.min(3, largura / 2, altura / 2);
+      if (contexto.roundRect) {
+        contexto.roundRect(x, y, largura, altura, raio);
+      } else {
+        contexto.rect(x, y, largura, altura);
+      }
+      contexto.clip();
+
+      contexto.drawImage(raster, x, y, largura, altura);
+      contexto.restore();
+    }
   }
 
   btnBaixar.addEventListener("click", async function () {
     if (!ultimoDot) return;
     var svgEl = elCanvas.querySelector("svg");
     if (!svgEl) return;
-    var svgExportavel = await prepararSvgParaExportacao(svgEl);
-    var svgText = new XMLSerializer().serializeToString(svgExportavel);
-    if (downloadsCap) {
-      try { await downloadsCap.save({ filename: "diagrama-interligacao.svg", data: svgText }); return; } catch (e) {}
-    }
-    // Fora do claude.ai (arquivo aberto direto no navegador): download comum via Blob.
+
     try {
-      var blob = new Blob([svgText], { type: "image/svg+xml" });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement("a");
-      a.href = url; a.download = "diagrama-interligacao.svg";
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
-    } catch (e) {}
+      var svgExportavel = await prepararSvgParaExportacao(svgEl, false);
+      var svgText = new XMLSerializer().serializeToString(svgExportavel);
+
+      if (downloadsCap) {
+        try {
+          await downloadsCap.save({ filename: "diagrama-interligacao.svg", data: svgText });
+          return;
+        } catch (e) {}
+      }
+
+      baixarBlob(
+        new Blob([svgText], { type: "image/svg+xml;charset=utf-8" }),
+        "diagrama-interligacao.svg"
+      );
+    } catch (e) {
+      mostrarErro("Não foi possível exportar o SVG.\nDetalhe: " + e.message);
+    }
   });
 
   btnBaixarPng.addEventListener("click", async function () {
     var svgEl = elCanvas.querySelector("svg");
     if (!svgEl) return;
-    var svgExportavel = await prepararSvgParaExportacao(svgEl);
-    var svgText = new XMLSerializer().serializeToString(svgExportavel);
-    var svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
-    var svgUrl = URL.createObjectURL(svgBlob);
-    var imagem = new Image();
-    imagem.onload = function () {
-      var viewBox = svgEl.viewBox && svgEl.viewBox.baseVal;
-      var largura = viewBox && viewBox.width ? viewBox.width : (parseFloat(svgEl.getAttribute("width")) || imagem.width);
-      var altura = viewBox && viewBox.height ? viewBox.height : (parseFloat(svgEl.getAttribute("height")) || imagem.height);
-      var escala = 2;
-      var canvasPng = document.createElement("canvas");
-      canvasPng.width = Math.ceil(largura * escala);
-      canvasPng.height = Math.ceil(altura * escala);
-      var contexto = canvasPng.getContext("2d");
-      contexto.fillStyle = getComputedStyle(elCanvas).backgroundColor || "#ffffff";
-      contexto.fillRect(0, 0, canvasPng.width, canvasPng.height);
-      contexto.drawImage(imagem, 0, 0, canvasPng.width, canvasPng.height);
-      canvasPng.toBlob(function (blob) {
-        if (!blob) return;
-        var url = URL.createObjectURL(blob);
-        var link = document.createElement("a");
-        link.href = url;
-        link.download = "diagrama-grafo.png";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }, "image/png");
-      URL.revokeObjectURL(svgUrl);
-    };
-    imagem.onerror = function () {
-      URL.revokeObjectURL(svgUrl);
-      mostrarErro("Não foi possível exportar o diagrama como PNG.");
-    };
-    imagem.src = svgUrl;
+
+    try {
+    
+      var svgSemImagens = await prepararSvgParaExportacao(svgEl, true);
+      var svgText = new XMLSerializer().serializeToString(svgSemImagens);
+      var svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
+      var svgUrl = URL.createObjectURL(svgBlob);
+
+      var base = new Image();
+
+      base.onload = async function () {
+        try {
+          var vb = svgEl.viewBox && svgEl.viewBox.baseVal;
+          var viewBox = {
+            x: vb ? vb.x : 0,
+            y: vb ? vb.y : 0,
+            width: vb && vb.width ? vb.width : (parseFloat(svgEl.getAttribute("width")) || base.width),
+            height: vb && vb.height ? vb.height : (parseFloat(svgEl.getAttribute("height")) || base.height)
+          };
+
+          var escala = 2;
+          var canvasPng = document.createElement("canvas");
+          canvasPng.width = Math.ceil(viewBox.width * escala);
+          canvasPng.height = Math.ceil(viewBox.height * escala);
+
+          var contexto = canvasPng.getContext("2d");
+          contexto.fillStyle = getComputedStyle(elCanvas).backgroundColor || "#ffffff";
+          contexto.fillRect(0, 0, canvasPng.width, canvasPng.height);
+
+         
+          contexto.drawImage(base, 0, 0, canvasPng.width, canvasPng.height);
+
+          await desenharImagensDosEquipamentosNoPng(
+            contexto,
+            svgEl,
+            escala,
+            viewBox
+          );
+
+          canvasPng.toBlob(function (blob) {
+            if (!blob) {
+              mostrarErro("Não foi possível finalizar o PNG.");
+              return;
+            }
+            baixarBlob(blob, "diagrama-grafo.png");
+          }, "image/png");
+        } catch (erroPng) {
+          mostrarErro("Não foi possível exportar o diagrama como PNG.\nDetalhe: " + erroPng.message);
+        } finally {
+          URL.revokeObjectURL(svgUrl);
+        }
+      };
+
+      base.onerror = function () {
+        URL.revokeObjectURL(svgUrl);
+        mostrarErro("Não foi possível preparar o diagrama para exportação PNG.");
+      };
+
+      base.src = svgUrl;
+    } catch (e) {
+      mostrarErro("Não foi possível exportar o diagrama como PNG.\nDetalhe: " + e.message);
+    }
   });
 
   (async function initDownloads() {
