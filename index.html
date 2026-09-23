@@ -647,14 +647,14 @@
 (function () {
   "use strict";
 
-  var ICONES = ["", "📡", "🔌", "🖧", "🛰️", "💻", "🗄️", "📶", "🌐", "⚡", "🧰", "🔧", "📻"];
+  var ICONES = [""];
   var CATALOGO_ICONES = [
-    { valor: "MIROTIK.jpeg", nome: "MikroTik / RB", arquivo: "MIROTIK.jpeg" },
+    { valor: "MIROTIK.png", nome: "MikroTik / RB", arquivo: "MIROTIK.png" },
     { valor: "OLT.jpeg", nome: "OLT", arquivo: "OLT.jpeg" },
     { valor: "SWITCH.jpeg", nome: "Switch", arquivo: "SWITCH.jpeg" },
-    { valor: "WhatsApp Image 2026-09-23 at 09.56.29 (4).jpeg", nome: "Retificador / RPS", arquivo: "WhatsApp Image 2026-09-23 at 09.56.29 (4).jpeg" },
-    { valor: "WhatsApp Image 2026-09-23 at 09.56.29 (5).jpeg", nome: "Nobreak", arquivo: "WhatsApp Image 2026-09-23 at 09.56.29 (5).jpeg" },
-    { valor: "WhatsApp Image 2026-09-23 at 09.56.29.jpeg", nome: "Módulo / Conversor", arquivo: "WhatsApp Image 2026-09-23 at 09.56.29.jpeg" }
+    { valor: "RTIFICADOR.jpeg", nome: "Retificador / RPS", arquivo: "RTIFICADOR.jpeg" },
+    { valor: "NOBREAK.jpeg", nome: "Nobreak", arquivo: "NOBREAK.jpeg" },
+    { valor: "VOLT.jpeg", nome: "Módulo / Conversor", arquivo: "VOLT.jpeg" }
   ];
 
   function imagemDoIcone(valor) {
@@ -666,10 +666,10 @@
     var chave = String(tipo || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     if (chave.indexOf("olt") >= 0) return "OLT.jpeg";
     if (chave.indexOf("switch") >= 0) return "SWITCH.jpeg";
-    if (chave.indexOf("roteador") >= 0 || chave.indexOf("mikrotik") >= 0 || chave.indexOf("rb/") >= 0) return "MIROTIK.jpeg";
-    if (chave.indexOf("retificador") >= 0 || chave.indexOf("rps") >= 0) return "WhatsApp Image 2026-09-23 at 09.56.29 (4).jpeg";
-    if (chave.indexOf("nobreak") >= 0 || chave.indexOf("nobreack") >= 0) return "WhatsApp Image 2026-09-23 at 09.56.29 (5).jpeg";
-    if (chave.indexOf("conversor") >= 0 || chave.indexOf("modulo") >= 0) return "WhatsApp Image 2026-09-23 at 09.56.29.jpeg";
+    if (chave.indexOf("roteador") >= 0 || chave.indexOf("mikrotik") >= 0 || chave.indexOf("rb/") >= 0) return "MIROTIK.png";
+    if (chave.indexOf("retificador") >= 0 || chave.indexOf("rps") >= 0) return "RTIFICADOR.jpeg";
+    if (chave.indexOf("nobreak") >= 0 || chave.indexOf("nobreack") >= 0) return "NOBREAK.jpeg";
+    if (chave.indexOf("conversor") >= 0 || chave.indexOf("modulo") >= 0) return "VOLT.jpeg";
     return "";
   }
 
@@ -678,11 +678,11 @@
 
   var exemplo = {
     equipamentos: [
-      { id: "eqOLT", nome: "OLT-01", modelo: "Huawei MA5800-X2", tipo: "OLT", icone: "📡", imagem: "", corFonte: "#16323D" },
-      { id: "eqSW", nome: "SW-Core", modelo: "Cisco Catalyst 9300", tipo: "Switch", icone: "🖧", imagem: "", corFonte: "#16323D" },
-      { id: "eqRADIO", nome: "Rádio-Enlace-Norte", modelo: "Mimosa B11", tipo: "Rádio", icone: "📶", imagem: "", corFonte: "#16323D" },
-      { id: "eqONT", nome: "ONT-Cliente-114", modelo: "Fiberhome AN5506", tipo: "ONT", icone: "🔌", imagem: "", corFonte: "#16323D" },
-      { id: "eqROT", nome: "Roteador-Borda", modelo: "Mikrotik CCR2004", tipo: "Roteador", icone: "🌐", imagem: "", corFonte: "#16323D" }
+      { id: "eqOLT", nome: "OLT-01", modelo: "Huawei MA5800-X2", tipo: "OLT", icone: "OLT.jpeg", imagem: "", corFonte: "#16323D" },
+      { id: "eqSW", nome: "SW-Core", modelo: "Cisco Catalyst 9300", tipo: "Switch", icone: "SWITCH.jpeg", imagem: "", corFonte: "#16323D" },
+      { id: "eqRADIO", nome: "Rádio-Enlace-Norte", modelo: "Mimosa B11", tipo: "Rádio", icone: "", imagem: "", corFonte: "#16323D" },
+      { id: "eqONT", nome: "ONT-Cliente-114", modelo: "Fiberhome AN5506", tipo: "ONT", icone: "", imagem: "", corFonte: "#16323D" },
+      { id: "eqROT", nome: "Roteador-Borda", modelo: "Mikrotik CCR2004", tipo: "Roteador", icone: "MIROTIK.png", imagem: "", corFonte: "#16323D" }
     ],
     conexoes: [
       { de: "eqROT", para: "eqSW", tipo: "SFP+", potencia: "10G", saida: "xe1/1/1", chegada: "XE1/1/7", cor: "#5A7284" },
@@ -762,8 +762,8 @@
   // segmentos horizontais/verticais e é recalculado quando um equipamento move.
   var CONFIG_ROTEAMENTO_CABOS = {
     espaco: 12,
-    margemPorta: 14,
-    margemEquipamento: 10,
+    margemPorta: 1,
+    margemEquipamento: 6,
     tentativas: 80
   };
   var roteamentoCabosFrame = null;
@@ -2130,8 +2130,8 @@
     var maiorQtdPortas = Math.max.apply(null, [1].concat(Object.keys(contagemPortas).map(function (id) { return contagemPortas[id]; })));
     // Reserva espaço horizontal/vertical suficiente para os corredores de cabo.
     var ranksepAuto = Math.max(1.15, Math.min(4.5, 0.95 + maiorQtdPortas * 0.16));
-    var linhas = ["digraph G {", '  rankdir=' + direcao + ';', '  splines=ortho;', '  concentrate=false;', '  overlap=false;', '  nodesep=0.75;', '  ranksep=' + ranksepAuto.toFixed(2) + ';', '  pad=0.18;', '  bgcolor="transparent";',
-      '  node [shape=box, style="filled", fontname="Helvetica", fontsize=10, margin="0.18,0.12", color="#547184", penwidth=1.1];',
+    var linhas = ["digraph G {", '  rankdir=' + direcao + ';', '  splines=ortho;', '  concentrate=false;', '  overlap=false;', '  nodesep=0.55;', '  ranksep=' + ranksepAuto.toFixed(2) + ';', '  pad=0.06;', '  bgcolor="transparent";',
+      '  node [shape=box, style="filled", fontname="Helvetica", fontsize=10, margin="0.04,0.06", color="#547184", penwidth=1.1];',
       '  edge [fontname="Helvetica", fontsize=8, color="#263746", fontcolor="#344D61", penwidth=1.5, arrowhead=none, labeldistance=1.25, labelangle=0, labelfontname="Helvetica", labelfontsize=8];'];
     var portasPorEquipamento = {};
     dados.equipamentos.forEach(function (eq) { portasPorEquipamento[eq.id] = { entrada: [], saida: [] }; });
@@ -2141,12 +2141,12 @@
     });
 
     var CONFIG_PORTA = {
-      largura: 76,
-      alturaMaxima: 28,
-      alturaMinima: 16,
+      largura: 52,
+      alturaMaxima: 24,
+      alturaMinima: 14,
       fonteMaxima: 10,
       fonteMinima: 7,
-      paddingMaximo: 4,
+      paddingMaximo: 3,
       paddingMinimo: 1,
       fundo: "#FFFFFF",
       borda: "#202020",
