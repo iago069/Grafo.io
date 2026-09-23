@@ -1773,7 +1773,7 @@
   }
 
   function gerarDot(dados, direcao) {
-    var linhas = ["digraph G {", '  rankdir=' + direcao + ';', '  splines=ortho;', '  concentrate=false;', '  overlap=false;', '  nodesep=0.65;', '  ranksep=0.9;', '  pad=0.18;', '  bgcolor="transparent";',
+    var linhas = ["digraph G {", '  rankdir=' + direcao + ';', '  splines=polyline;', '  concentrate=false;', '  overlap=false;', '  nodesep=0.65;', '  ranksep=0.9;', '  pad=0.18;', '  bgcolor="transparent";',
       '  node [shape=box, style="filled", fontname="Helvetica", fontsize=10, margin="0.18,0.12", color="#547184", penwidth=1.1];',
       '  edge [fontname="Helvetica", fontsize=8, color="#263746", fontcolor="#344D61", penwidth=1.5, arrowhead=none, labeldistance=1.25, labelangle=0, labelfontname="Helvetica", labelfontsize=8];'];
     var portasPorEquipamento = {};
@@ -1783,10 +1783,56 @@
       if (portasPorEquipamento[c.para]) portasPorEquipamento[c.para].entrada.push({ id: "in_" + indice, nome: c.chegada || "P2" });
     });
 
+    var CONFIG_PORTA = {
+      largura: 76,
+      alturaMaxima: 28,
+      alturaMinima: 16,
+      fonteMaxima: 10,
+      fonteMinima: 7,
+      paddingMaximo: 4,
+      paddingMinimo: 1,
+      fundo: "#FFFFFF",
+      borda: "#202020",
+      texto: "#111111",
+      maxCaracteres: 11
+    };
+    var ALTURA_BASE_EQUIPAMENTO = 92;
+
+    function calcularFontePorta(altura) {
+      if (altura >= 24) return 10;
+      if (altura >= 20) return 9;
+      return Math.max(CONFIG_PORTA.fonteMinima, 8);
+    }
+
+    function calcularPaddingPorta(altura) {
+      if (altura >= 24) return CONFIG_PORTA.paddingMaximo;
+      if (altura >= 20) return 2;
+      return CONFIG_PORTA.paddingMinimo;
+    }
+
+    function calcularLayoutPortas(totalPortas) {
+      totalPortas = Math.max(Number(totalPortas) || 1, 1);
+      var alturaIdeal = ALTURA_BASE_EQUIPAMENTO / totalPortas;
+      var alturaPorta = Math.max(CONFIG_PORTA.alturaMinima, Math.min(CONFIG_PORTA.alturaMaxima, alturaIdeal));
+      var alturaEquipamento = Math.max(ALTURA_BASE_EQUIPAMENTO, totalPortas * alturaPorta);
+      return {
+        alturaPorta: Math.round(alturaPorta),
+        alturaEquipamento: Math.ceil(alturaEquipamento),
+        fonte: calcularFontePorta(alturaPorta),
+        padding: calcularPaddingPorta(alturaPorta)
+      };
+    }
+
+    function limitarNomePorta(nome) {
+      nome = String(nome || "PORTA").trim();
+      if (nome.length > CONFIG_PORTA.maxCaracteres) return nome.substring(0, CONFIG_PORTA.maxCaracteres - 1) + "…";
+      return nome;
+    }
+
     function celulaPorta(porta, lado) {
-      var alinhamento = lado === "entrada" ? "RIGHT" : "LEFT";
-      var cor = lado === "entrada" ? "#D7E7F2" : "#E7DDF7";
-      return '<TD PORT="' + porta.id + '" BORDER="1" COLOR="#25206B" BGCOLOR="' + cor + '" CELLPADDING="6" ALIGN="' + alinhamento + '"><FONT FACE="Helvetica" POINT-SIZE="8" COLOR="#17212B"><B>' + escaparHtmlDot(porta.nome) + '</B></FONT></TD>';
+      var layout = arguments[2] || calcularLayoutPortas(1);
+      var nome = escaparHtmlDot(limitarNomePorta(porta.nome));
+      return '<TD PORT="' + porta.id + '" BORDER="1" COLOR="' + CONFIG_PORTA.borda + '" BGCOLOR="' + CONFIG_PORTA.fundo + '" WIDTH="' + CONFIG_PORTA.largura + '" HEIGHT="' + layout.alturaPorta + '" FIXEDSIZE="TRUE" CELLPADDING="' + layout.padding + '" ALIGN="CENTER" VALIGN="MIDDLE"><FONT FACE="Helvetica" POINT-SIZE="' + layout.fonte + '" COLOR="' + CONFIG_PORTA.texto + '">' + nome + '</FONT></TD>';
     }
 
     function linhaEquipamento(eq) {
@@ -1800,11 +1846,16 @@
       var corCabecalho = corPorTipo(eq.tipo);
       var portas = portasPorEquipamento[eq.id] || { entrada: [], saida: [] };
       var totalPortas = Math.max(portas.entrada.length, portas.saida.length, 1);
+      var layoutPortas = calcularLayoutPortas(totalPortas);
       var linhasPortas = "";
       for (var portaIndice = 0; portaIndice < totalPortas; portaIndice++) {
         var entrada = portas.entrada[portaIndice];
         var saida = portas.saida[portaIndice];
-        linhasPortas += '<TR>' + (entrada ? celulaPorta(entrada, "entrada") : '<TD BORDER="0" WIDTH="4"></TD>') + '<TD BORDER="0" CELLPADDING="0" WIDTH="120" HEIGHT="' + (portaIndice === 0 ? "92" : "4") + '"></TD>' + (saida ? celulaPorta(saida, "saida") : '<TD BORDER="0" WIDTH="4"></TD>') + '</TR>';
+        linhasPortas += '<TR>' +
+          (entrada ? celulaPorta(entrada, "entrada", layoutPortas) : '<TD BORDER="0" WIDTH="' + CONFIG_PORTA.largura + '" HEIGHT="' + layoutPortas.alturaPorta + '" FIXEDSIZE="TRUE"></TD>') +
+          (portaIndice === 0 ? '<TD BORDER="0" CELLPADDING="0" WIDTH="120" ROWSPAN="' + totalPortas + '" ALIGN="CENTER" VALIGN="MIDDLE"></TD>' : '') +
+          (saida ? celulaPorta(saida, "saida", layoutPortas) : '<TD BORDER="0" WIDTH="' + CONFIG_PORTA.largura + '" HEIGHT="' + layoutPortas.alturaPorta + '" FIXEDSIZE="TRUE"></TD>') +
+          '</TR>';
       }
       var rotulo = '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0">' +
         '<TR><TD COLSPAN="3" CELLPADDING="3" ALIGN="CENTER"><FONT FACE="Helvetica" POINT-SIZE="11" COLOR="#14212B"><B>' + nome + '</B></FONT><BR/>' +
