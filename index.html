@@ -25,6 +25,16 @@
     --paper-line: #dfe8ef;
     --ink: #142c3c;
     --danger: #ff7d6c;
+    --field-bg: rgba(255,255,255,0.02);
+    --field-text: var(--text);
+    --field-border: var(--line-soft);
+    --ghost-bg: rgba(255,255,255,0.02);
+    --ghost-text: var(--text-dim);
+    --ghost-border: var(--line);
+    --option-bg: #f4f8fb;
+    --option-text: #142c3c;
+    --option-active-bg: #1769c2;
+    --option-active-text: #ffffff;
     --shadow-soft: 0 10px 30px rgba(5, 12, 20, 0.25);
     --shadow-card: 0 12px 28px rgba(6, 15, 22, 0.22);
     --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -96,20 +106,20 @@
   }
   .theme-toolbar .theme-select:focus { color: var(--text); font-size: 0.77rem; padding: 9px 34px 9px 12px; background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%), linear-gradient(135deg, var(--text-dim) 50%, transparent 50%); background-position: calc(100% - 18px) calc(50% - 2px), calc(100% - 13px) calc(50% - 2px); background-size: 5px 5px, 5px 5px; }
   .theme-select option, .theme-select optgroup {
-    color: #142c3c;
-    background-color: #f4f8fb;
+    color: var(--option-text);
+    background-color: var(--option-bg);
   }
   .theme-select option:checked, .theme-select option:hover {
-    color: #ffffff;
-    background-color: #1769c2;
+    color: var(--option-active-text);
+    background-color: var(--option-active-bg);
   }
   select option, select optgroup {
-    color: #142c3c;
-    background-color: #f4f8fb;
+    color: var(--option-text);
+    background-color: var(--option-bg);
   }
   select option:checked, select option:hover {
-    color: #ffffff;
-    background-color: #1769c2;
+    color: var(--option-active-text);
+    background-color: var(--option-active-bg);
   }
   .theme-toolbar .theme-toggle:last-child {
     min-width: 112px !important; padding: 10px 18px; border: 0; border-radius: 12px;
@@ -288,7 +298,7 @@
   }
 
   input[type="text"], input:not([type]), select, input[type="file"]::file-selector-button {
-    background: rgba(255,255,255,0.02); color: var(--text); border: 1px solid var(--line-soft); border-radius: 10px;
+    background: var(--field-bg); color: var(--field-text); border: 1px solid var(--field-border); border-radius: 10px;
     padding: 8px 10px; font-family: var(--sans); font-size: 0.82rem; transition: border-color 0.2s ease, box-shadow 0.2s ease;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
   }
@@ -322,11 +332,11 @@
   button:hover { transform: translateY(-1px); }
   button.primary { background: var(--accent); color: var(--accent-ink); box-shadow: 0 10px 20px color-mix(in srgb, var(--accent) 20%, transparent); }
   button.primary:hover { filter: brightness(1.04); }
-  button.ghost { background: rgba(255,255,255,0.02); color: var(--text-dim); border: 1px solid var(--line); }
+  button.ghost { background: var(--ghost-bg); color: var(--ghost-text); border: 1px solid var(--ghost-border); }
   button.ghost:hover { color: var(--text); border-color: var(--text-dim); }
   button.ghost.small { padding: 5px 9px; font-size: 0.74rem; font-weight: 500; }
   button.add-item {
-    width: 100%; background: rgba(255,255,255,0.02); border: 1px dashed var(--line); color: var(--text-dim);
+    width: 100%; background: var(--ghost-bg); border: 1px dashed var(--ghost-border); color: var(--ghost-text);
     padding: 9px; margin-bottom: 6px; border-radius: 12px;
   }
   button.add-item:hover { color: var(--teal); border-color: var(--teal); }
@@ -631,23 +641,28 @@
     </div>
   </div>
 
-<datalist id="tipos-sugeridos">
-  <option value="OLT"></option>
-  <option value="Switch"></option>
-  <option value="Roteador"></option>
-  <option value="Rádio"></option>
-  <option value="ONT"></option>
-  <option value="ONU"></option>
-  <option value="Firewall"></option>
-  <option value="Servidor"></option>
-  <option value="Antena"></option>
-</datalist>
+<datalist id="tipos-sugeridos"></datalist>
 
 <script>
 (function () {
   "use strict";
 
   var ICONES = [""];
+  var EQUIPAMENTOS_API_URL = (window.EQUIPAMENTOS_API_URL && window.EQUIPAMENTOS_API_URL.trim()) || "/api/equipamentos";
+  var TIPOS_BASE = [
+    { nome: "OLT", icone: "OLT.jpeg" },
+    { nome: "Switch", icone: "SWITCH.jpeg" },
+    { nome: "Roteador", icone: "MIROTIK.png" },
+    { nome: "Rádio", icone: "" },
+    { nome: "ONT", icone: "" },
+    { nome: "ONU", icone: "" },
+    { nome: "Firewall", icone: "" },
+    { nome: "Servidor", icone: "" },
+    { nome: "Antena", icone: "" },
+    { nome: "MikroTik", icone: "MIROTIK.png" },
+    { nome: "UPS", icone: "NOBREAK.jpeg" },
+    { nome: "Nobreak", icone: "NOBREAK.jpeg" }
+  ];
   var CATALOGO_ICONES = [
     { valor: "MIROTIK.png", nome: "MikroTik / RB", arquivo: "MIROTIK.png" },
     { valor: "OLT.jpeg", nome: "OLT", arquivo: "OLT.jpeg" },
@@ -656,14 +671,128 @@
     { valor: "NOBREAK.jpeg", nome: "Nobreak", arquivo: "NOBREAK.jpeg" },
     { valor: "VOLT.jpeg", nome: "Módulo / Conversor", arquivo: "VOLT.jpeg" }
   ];
+  var catalogoTiposEquipamentos = TIPOS_BASE.slice();
+
+  function normalizarTextoEquipamento(valor) {
+    return String(valor || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  function extrairNomeTipo(item) {
+    if (!item) return "";
+    return item.nome || item.tipo || item.tipoequipamento || item.label || item.value || "";
+  }
+
+  function extrairIconeTipo(item) {
+    if (!item) return "";
+    return item.icone || item.arquivo || item.imagem || item.iconeArquivo || item.icon || "";
+  }
 
   function imagemDoIcone(valor) {
     var item = CATALOGO_ICONES.find(function (icone) { return icone.valor === valor; });
     return item ? item.arquivo : "";
   }
 
+  function renderizarTiposSugeridos() {
+    var datalist = document.getElementById("tipos-sugeridos");
+    if (!datalist) return;
+    var itens = [];
+    catalogoTiposEquipamentos.forEach(function (tipo) {
+      var nome = extrairNomeTipo(tipo);
+      if (!nome) return;
+      var chave = normalizarTextoEquipamento(nome);
+      if (!itens.some(function (entry) { return normalizarTextoEquipamento(entry.nome) === chave; })) {
+        itens.push({ nome: nome, icone: extrairIconeTipo(tipo) });
+      }
+    });
+    datalist.innerHTML = itens.map(function (tipo) {
+      return '<option value="' + escaparHtml(tipo.nome) + '"></option>';
+    }).join("");
+  }
+
+  function buscarTipoNoCatalogo(tipo) {
+    var chave = normalizarTextoEquipamento(tipo);
+    if (!chave) return null;
+    return catalogoTiposEquipamentos.find(function (item) {
+      var nome = normalizarTextoEquipamento(extrairNomeTipo(item));
+      return nome === chave || nome.indexOf(chave) >= 0 || chave.indexOf(nome) >= 0;
+    }) || null;
+  }
+
+  function registrarTipoEquipamento(nome, opcoes) {
+    var nomeTipo = String(nome || "").trim();
+    if (!nomeTipo) return false;
+    var item = {
+      nome: nomeTipo,
+      icone: opcoes && opcoes.icone ? opcoes.icone : ""
+    };
+    var existente = buscarTipoNoCatalogo(nomeTipo);
+    if (existente) {
+      if (opcoes && opcoes.icone && !existente.icone) existente.icone = opcoes.icone;
+      return true;
+    }
+    catalogoTiposEquipamentos.push(item);
+    renderizarTiposSugeridos();
+    return true;
+  }
+
+  function aplicarCatalogoExterno(lista) {
+    var tipos = Array.isArray(lista) ? lista : [];
+    var merge = TIPOS_BASE.slice();
+    tipos.forEach(function (item) {
+      if (!item) return;
+      var nome = String(extrairNomeTipo(item) || "").trim();
+      if (!nome) return;
+      merge.push({ nome: nome, icone: extrairIconeTipo(item) || "" });
+    });
+    catalogoTiposEquipamentos = merge.filter(function (item, index, array) {
+      var nome = String(extrairNomeTipo(item) || "").trim();
+      if (!nome) return false;
+      return array.findIndex(function (entry) {
+        return normalizarTextoEquipamento(extrairNomeTipo(entry)) === normalizarTextoEquipamento(nome);
+      }) === index;
+    });
+    renderizarTiposSugeridos();
+  }
+
+  function carregarTiposDeEquipamento() {
+    var urls = [EQUIPAMENTOS_API_URL, "./api/equipamentos.json", "/api/equipamentos.json"]; 
+    var indiceAtual = 0;
+
+    function tentarProximo() {
+      if (indiceAtual >= urls.length) {
+        catalogoTiposEquipamentos = TIPOS_BASE.slice();
+        renderizarTiposSugeridos();
+        return;
+      }
+
+      var urlAtual = urls[indiceAtual++];
+      fetch(urlAtual, { cache: "no-store" })
+        .then(function (resposta) {
+          if (!resposta.ok) throw new Error("HTTP " + resposta.status);
+          return resposta.json();
+        })
+        .then(function (dados) {
+          var lista = Array.isArray(dados) ? dados : (Array.isArray(dados.tipos) ? dados.tipos : []);
+          if (lista.length) {
+            aplicarCatalogoExterno(lista);
+          } else {
+            catalogoTiposEquipamentos = TIPOS_BASE.slice();
+            renderizarTiposSugeridos();
+          }
+        })
+        .catch(function () {
+          tentarProximo();
+        });
+    }
+
+    tentarProximo();
+  }
+
   function iconePorTipo(tipo) {
-    var chave = String(tipo || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    var itemCatalogo = buscarTipoNoCatalogo(tipo);
+    if (itemCatalogo && itemCatalogo.icone) return itemCatalogo.icone;
+
+    var chave = normalizarTextoEquipamento(tipo);
     if (chave.indexOf("olt") >= 0) return "OLT.jpeg";
     if (chave.indexOf("switch") >= 0) return "SWITCH.jpeg";
     if (chave.indexOf("roteador") >= 0 || chave.indexOf("mikrotik") >= 0 || chave.indexOf("rb/") >= 0) return "MIROTIK.png";
@@ -672,6 +801,16 @@
     if (chave.indexOf("conversor") >= 0 || chave.indexOf("modulo") >= 0) return "VOLT.jpeg";
     return "";
   }
+
+  window.apiEquipamentos = {
+    listar: function () { return catalogoTiposEquipamentos.slice(); },
+    registrar: registrarTipoEquipamento,
+    recarregar: carregarTiposDeEquipamento,
+    url: EQUIPAMENTOS_API_URL
+  };
+
+  renderizarTiposSugeridos();
+  carregarTiposDeEquipamento();
 
   var contadorId = 1;
   function novoId() { return "eq" + (contadorId++) + "_" + Math.random().toString(36).slice(2, 6); }
@@ -1470,50 +1609,45 @@
 
   var themePresets = {
     "theme-nord": {
-      bg: "#2E3440", bgPanel: "rgba(32, 38, 48, 0.95)", bgPanel2: "#3B4252", line: "rgba(136, 192, 208, 0.22)", lineSoft: "rgba(129, 161, 193, 0.18)", text: "#ECEFF4", textDim: "#D8DEE9", accent: "#88C0D0", accentInk: "#2E3440", teal: "#8FBCBB", paper: "#F4F6FA", paperLine: "#D8DEE9", ink: "#2E3440"
+      bg: "#2E3440", bgPanel: "rgba(32, 38, 48, 0.95)", bgPanel2: "#3B4252", line: "rgba(136, 192, 208, 0.22)", lineSoft: "rgba(129, 161, 193, 0.18)", text: "#ECEFF4", textDim: "#D8DEE9", accent: "#88C0D0", accentInk: "#2E3440", teal: "#8FBCBB", paper: "#F4F6FA", paperLine: "#D8DEE9", ink: "#2E3440", danger: "#FF7D6C", fieldBg: "rgba(236,239,244,0.05)", fieldText: "#ECEFF4", fieldBorder: "rgba(136,192,208,0.22)", ghostBg: "rgba(236,239,244,0.04)", ghostText: "#D8DEE9", ghostBorder: "rgba(136,192,208,0.22)", optionBg: "#F4F6FA", optionText: "#2E3440", optionActiveBg: "#88C0D0", optionActiveText: "#2E3440", shadowSoft: "0 10px 30px rgba(5, 12, 20, 0.25)", shadowCard: "0 12px 28px rgba(6, 15, 22, 0.22)"
     },
     "theme-dark-modern": {
-      bg: "#1F1F1F", bgPanel: "rgba(33, 33, 33, 0.94)", bgPanel2: "#2B2B2B", line: "rgba(124, 124, 124, 0.2)", lineSoft: "rgba(170, 170, 170, 0.14)", text: "#F3F3F3", textDim: "#C9C9C9", accent: "#5AA9FF", accentInk: "#0F172A", teal: "#7CE6D8", paper: "#F8F8F8", paperLine: "#E2E2E2", ink: "#1D1D1D"
+      bg: "#1F1F1F", bgPanel: "rgba(33, 33, 33, 0.94)", bgPanel2: "#2B2B2B", line: "rgba(124, 124, 124, 0.2)", lineSoft: "rgba(170, 170, 170, 0.14)", text: "#F3F3F3", textDim: "#C9C9C9", accent: "#5AA9FF", accentInk: "#0F172A", teal: "#7CE6D8", paper: "#F8F8F8", paperLine: "#E2E2E2", ink: "#1D1D1D", danger: "#FF7D6C", fieldBg: "rgba(255,255,255,0.03)", fieldText: "#F3F3F3", fieldBorder: "rgba(170,170,170,0.18)", ghostBg: "rgba(255,255,255,0.02)", ghostText: "#C9C9C9", ghostBorder: "rgba(170,170,170,0.18)", optionBg: "#F8F8F8", optionText: "#1D1D1D", optionActiveBg: "#5AA9FF", optionActiveText: "#0F172A", shadowSoft: "0 10px 30px rgba(0, 0, 0, 0.24)", shadowCard: "0 12px 28px rgba(0, 0, 0, 0.18)"
     },
     "theme-dracula": {
-      bg: "#282A36", bgPanel: "rgba(40, 42, 54, 0.95)", bgPanel2: "#1E2029", line: "rgba(255, 121, 198, 0.18)", lineSoft: "rgba(189, 147, 249, 0.18)", text: "#F8F8F2", textDim: "#BD93F9", accent: "#FF79C6", accentInk: "#282A36", teal: "#8BE9FD", paper: "#F7F7F7", paperLine: "#E5E5E5", ink: "#282A36"
+      bg: "#282A36", bgPanel: "rgba(40, 42, 54, 0.95)", bgPanel2: "#1E2029", line: "rgba(255, 121, 198, 0.18)", lineSoft: "rgba(189, 147, 249, 0.18)", text: "#F8F8F2", textDim: "#BD93F9", accent: "#FF79C6", accentInk: "#282A36", teal: "#8BE9FD", paper: "#F7F7F7", paperLine: "#E5E5E5", ink: "#282A36", danger: "#FF5555", fieldBg: "rgba(248,248,242,0.04)", fieldText: "#F8F8F2", fieldBorder: "rgba(255,121,198,0.2)", ghostBg: "rgba(248,248,242,0.03)", ghostText: "#BD93F9", ghostBorder: "rgba(255,121,198,0.2)", optionBg: "#F7F7F7", optionText: "#282A36", optionActiveBg: "#FF79C6", optionActiveText: "#282A36", shadowSoft: "0 10px 30px rgba(0, 0, 0, 0.28)", shadowCard: "0 12px 28px rgba(0, 0, 0, 0.2)"
     },
     "theme-dark-plus": {
-      bg: "#0D1117", bgPanel: "rgba(13, 17, 23, 0.94)", bgPanel2: "#161B22", line: "rgba(110, 118, 129, 0.18)", lineSoft: "rgba(110, 118, 129, 0.14)", text: "#C9D1D9", textDim: "#8B949E", accent: "#58A6FF", accentInk: "#0D1117", teal: "#39D353", paper: "#F6F8FA", paperLine: "#D0D7DE", ink: "#0D1117"
+      bg: "#0D1117", bgPanel: "rgba(13, 17, 23, 0.94)", bgPanel2: "#161B22", line: "rgba(110, 118, 129, 0.18)", lineSoft: "rgba(110, 118, 129, 0.14)", text: "#C9D1D9", textDim: "#8B949E", accent: "#58A6FF", accentInk: "#0D1117", teal: "#39D353", paper: "#F6F8FA", paperLine: "#D0D7DE", ink: "#0D1117", danger: "#F85149", fieldBg: "rgba(201,209,217,0.04)", fieldText: "#C9D1D9", fieldBorder: "rgba(110,118,129,0.22)", ghostBg: "rgba(201,209,217,0.03)", ghostText: "#8B949E", ghostBorder: "rgba(110,118,129,0.22)", optionBg: "#F6F8FA", optionText: "#0D1117", optionActiveBg: "#58A6FF", optionActiveText: "#0D1117", shadowSoft: "0 10px 30px rgba(0, 0, 0, 0.3)", shadowCard: "0 12px 28px rgba(0, 0, 0, 0.22)"
     },
     "theme-catppuccin-mocha": {
-      bg: "#1E1E2E", bgPanel: "rgba(30, 30, 46, 0.94)", bgPanel2: "#302D41", line: "rgba(203, 166, 247, 0.18)", lineSoft: "rgba(137, 180, 250, 0.16)", text: "#CDD6F4", textDim: "#BAC2DE", accent: "#F38BA8", accentInk: "#1E1E2E", teal: "#94E2D5", paper: "#F4F3F8", paperLine: "#D9E0EC", ink: "#1E1E2E"
+      bg: "#1E1E2E", bgPanel: "rgba(30, 30, 46, 0.94)", bgPanel2: "#302D41", line: "rgba(203, 166, 247, 0.18)", lineSoft: "rgba(137, 180, 250, 0.16)", text: "#CDD6F4", textDim: "#BAC2DE", accent: "#F38BA8", accentInk: "#1E1E2E", teal: "#94E2D5", paper: "#F4F3F8", paperLine: "#D9E0EC", ink: "#1E1E2E", danger: "#F38BA8", fieldBg: "rgba(205,214,244,0.05)", fieldText: "#CDD6F4", fieldBorder: "rgba(203,166,247,0.22)", ghostBg: "rgba(205,214,244,0.04)", ghostText: "#BAC2DE", ghostBorder: "rgba(203,166,247,0.22)", optionBg: "#F4F3F8", optionText: "#1E1E2E", optionActiveBg: "#F38BA8", optionActiveText: "#1E1E2E", shadowSoft: "0 10px 30px rgba(0, 0, 0, 0.25)", shadowCard: "0 12px 28px rgba(0, 0, 0, 0.2)"
     },
     "theme-github-light": {
-      bg: "#F6F8FA", bgPanel: "rgba(255, 255, 255, 0.96)", bgPanel2: "#FFFFFF", line: "rgba(208, 215, 222, 0.65)", lineSoft: "rgba(208, 215, 222, 0.8)", text: "#24292F", textDim: "#57606A", accent: "#0969DA", accentInk: "#FFFFFF", teal: "#1A7F37", paper: "#FFFFFF", paperLine: "#D0D7DE", ink: "#24292F"
+      bg: "#F6F8FA", bgPanel: "rgba(255, 255, 255, 0.96)", bgPanel2: "#FFFFFF", line: "rgba(208, 215, 222, 0.65)", lineSoft: "rgba(208, 215, 222, 0.8)", text: "#24292F", textDim: "#57606A", accent: "#0969DA", accentInk: "#FFFFFF", teal: "#1A7F37", paper: "#FFFFFF", paperLine: "#D0D7DE", ink: "#24292F", danger: "#CF222E", fieldBg: "rgba(36,41,47,0.03)", fieldText: "#24292F", fieldBorder: "rgba(208,215,222,0.9)", ghostBg: "rgba(36,41,47,0.02)", ghostText: "#57606A", ghostBorder: "rgba(208,215,222,0.9)", optionBg: "#FFFFFF", optionText: "#24292F", optionActiveBg: "#0969DA", optionActiveText: "#FFFFFF", shadowSoft: "0 18px 36px rgba(16, 33, 46, 0.12)", shadowCard: "0 12px 24px rgba(16, 33, 46, 0.08)"
     },
     "theme-solarized-light": {
-      bg: "#FDF6E3", bgPanel: "rgba(255, 250, 240, 0.96)", bgPanel2: "#F5E6C5", line: "rgba(147, 161, 161, 0.4)", lineSoft: "rgba(147, 161, 161, 0.3)", text: "#002B36", textDim: "#586E75", accent: "#B58900", accentInk: "#FDF6E3", teal: "#2AA198", paper: "#FFFDF7", paperLine: "#EEE8D5", ink: "#073642"
+      bg: "#FDF6E3", bgPanel: "rgba(255, 250, 240, 0.96)", bgPanel2: "#F5E6C5", line: "rgba(147, 161, 161, 0.4)", lineSoft: "rgba(147, 161, 161, 0.3)", text: "#002B36", textDim: "#586E75", accent: "#B58900", accentInk: "#FDF6E3", teal: "#2AA198", paper: "#FFFDF7", paperLine: "#EEE8D5", ink: "#073642", danger: "#DC322F", fieldBg: "rgba(0,43,54,0.04)", fieldText: "#002B36", fieldBorder: "rgba(147,161,161,0.5)", ghostBg: "rgba(0,43,54,0.03)", ghostText: "#586E75", ghostBorder: "rgba(147,161,161,0.5)", optionBg: "#FFFDF7", optionText: "#073642", optionActiveBg: "#B58900", optionActiveText: "#FDF6E3", shadowSoft: "0 18px 36px rgba(7, 54, 66, 0.12)", shadowCard: "0 12px 24px rgba(7, 54, 66, 0.08)"
     },
     "theme-light-plus": {
-      bg: "#F3F3F3", bgPanel: "rgba(255, 255, 255, 0.96)", bgPanel2: "#F7F7F7", line: "rgba(201, 201, 201, 0.7)", lineSoft: "rgba(201, 201, 201, 0.55)", text: "#1F1F1F", textDim: "#5B5B5B", accent: "#2F80ED", accentInk: "#FFFFFF", teal: "#00A39D", paper: "#FFFFFF", paperLine: "#E5E5E5", ink: "#1F1F1F"
+      bg: "#F3F3F3", bgPanel: "rgba(255, 255, 255, 0.96)", bgPanel2: "#F7F7F7", line: "rgba(201, 201, 201, 0.7)", lineSoft: "rgba(201, 201, 201, 0.55)", text: "#1F1F1F", textDim: "#5B5B5B", accent: "#2F80ED", accentInk: "#FFFFFF", teal: "#00A39D", paper: "#FFFFFF", paperLine: "#E5E5E5", ink: "#1F1F1F", danger: "#D64545", fieldBg: "rgba(31,31,31,0.04)", fieldText: "#1F1F1F", fieldBorder: "rgba(201,201,201,0.9)", ghostBg: "rgba(31,31,31,0.03)", ghostText: "#5B5B5B", ghostBorder: "rgba(201,201,201,0.9)", optionBg: "#FFFFFF", optionText: "#1F1F1F", optionActiveBg: "#2F80ED", optionActiveText: "#FFFFFF", shadowSoft: "0 18px 36px rgba(31, 31, 31, 0.08)", shadowCard: "0 12px 24px rgba(31, 31, 31, 0.06)"
     },
     "theme-alto-contraste": {
-      bg: "#000000", bgPanel: "rgba(0, 0, 0, 0.98)", bgPanel2: "#111111", line: "rgba(255, 255, 255, 0.46)", lineSoft: "rgba(255, 255, 255, 0.28)", text: "#FFFFFF", textDim: "#E6E6E6", accent: "#FFFF00", accentInk: "#000000", teal: "#00FFFF", paper: "#FFFFFF", paperLine: "#DADADA", ink: "#000000"
+      bg: "#000000", bgPanel: "rgba(0, 0, 0, 0.98)", bgPanel2: "#111111", line: "rgba(255, 255, 255, 0.46)", lineSoft: "rgba(255, 255, 255, 0.28)", text: "#FFFFFF", textDim: "#E6E6E6", accent: "#FFFF00", accentInk: "#000000", teal: "#00FFFF", paper: "#FFFFFF", paperLine: "#DADADA", ink: "#000000", danger: "#FF0000", fieldBg: "rgba(255,255,255,0.06)", fieldText: "#FFFFFF", fieldBorder: "rgba(255,255,255,0.5)", ghostBg: "rgba(255,255,255,0.04)", ghostText: "#E6E6E6", ghostBorder: "rgba(255,255,255,0.5)", optionBg: "#FFFFFF", optionText: "#000000", optionActiveBg: "#FFFF00", optionActiveText: "#000000", shadowSoft: "0 0 0 2px rgba(255,255,255,0.25)", shadowCard: "0 0 0 2px rgba(255,255,255,0.22)"
     }
   };
 
   var temaSelect = document.getElementById("temaSelect");
 
   function removerTemaCustomizado() {
-    document.documentElement.style.removeProperty("--bg");
-    document.documentElement.style.removeProperty("--bg-panel");
-    document.documentElement.style.removeProperty("--bg-panel-2");
-    document.documentElement.style.removeProperty("--line");
-    document.documentElement.style.removeProperty("--line-soft");
-    document.documentElement.style.removeProperty("--text");
-    document.documentElement.style.removeProperty("--text-dim");
-    document.documentElement.style.removeProperty("--accent");
-    document.documentElement.style.removeProperty("--accent-ink");
-    document.documentElement.style.removeProperty("--teal");
-    document.documentElement.style.removeProperty("--paper");
-    document.documentElement.style.removeProperty("--paper-line");
-    document.documentElement.style.removeProperty("--ink");
+    [
+      "--bg", "--bg-panel", "--bg-panel-2", "--line", "--line-soft", "--text", "--text-dim", "--accent", "--accent-ink",
+      "--teal", "--paper", "--paper-line", "--ink", "--danger", "--field-bg", "--field-text", "--field-border",
+      "--ghost-bg", "--ghost-text", "--ghost-border", "--option-bg", "--option-text", "--option-active-bg",
+      "--option-active-text", "--shadow-soft", "--shadow-card"
+    ].forEach(function (prop) {
+      document.documentElement.style.removeProperty(prop);
+    });
   }
 
   function aplicarTemaPersonalizado(chave) {
