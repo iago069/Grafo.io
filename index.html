@@ -382,11 +382,11 @@
   .canvas-wrap {
     flex: 1; min-height: 320px; background: var(--paper);
     background-image: linear-gradient(var(--paper-line) 1px, transparent 1px), linear-gradient(90deg, var(--paper-line) 1px, transparent 1px);
-    background-size: 20px 20px; border-radius: 3px; overflow: auto; display: flex; align-items: center; justify-content: center; padding: 16px;
+    background-size: 20px 20px; border: 0; border-radius: 0; overflow: visible; display: flex; align-items: flex-start; justify-content: flex-start; padding: 0;
     position: relative; cursor: grab; touch-action: none;
   }
   .canvas-wrap.panning { cursor: grabbing; }
-  .canvas-wrap svg { max-width: 100%; height: auto; transform-origin: center center; animation: aparecer 0.35s ease; user-select: none; pointer-events: auto; }
+  .canvas-wrap svg { display: block; max-width: none; height: auto; transform-origin: center center; animation: aparecer 0.35s ease; user-select: none; pointer-events: auto; margin: 0; }
   .canvas-wrap svg g.node { cursor: grab; }
   .canvas-wrap svg g.node:active, .canvas-wrap svg g.node.selecionado { cursor: grabbing; }
   .canvas-wrap svg g.edge { cursor: default; }
@@ -628,6 +628,7 @@
 
           <div class="controls-row">
             <button class="primary" id="btnGerar" type="button">Gerar diagrama</button>
+            <button class="ghost" id="btnOrganizarDiagrama" type="button">Organizar diagrama</button>
             <select id="direcao" title="Sentido do layout">
               <option value="LR">Esquerda → Direita</option>
               <option value="TB">Cima → Baixo</option>
@@ -880,6 +881,7 @@
   var elDotCode = document.getElementById("dot-code");
   var elJsonAvancado = document.getElementById("jsonAvancado");
   var btnGerar = document.getElementById("btnGerar");
+  var btnOrganizar = document.getElementById("btnOrganizarDiagrama");
   var btnCopiar = document.getElementById("btnCopiarDot");
   var btnBaixar = document.getElementById("btnBaixar");
   var btnBaixarPng = document.getElementById("btnBaixarPng");
@@ -905,8 +907,24 @@
   var aplicandoHistorico = false;
   var atualizacaoDiagramaPendente = null;
   var canvasView = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 };
+  var LIMITE_CANVAS = { minX: -4200, maxX: 4200, minY: -3200, maxY: 3200 };
+  Object.defineProperty(window, 'LIMITE_CANVAS', { value: LIMITE_CANVAS, configurable: true, writable: true, enumerable: true });
+  Object.defineProperty(globalThis, 'LIMITE_CANVAS', { value: LIMITE_CANVAS, configurable: true, writable: true, enumerable: true });
 
   function limitarZoom(valor) { return Math.min(3, Math.max(0.4, Number(valor.toFixed(2)))); }
+
+  function limitarPosicaoNoCanvas(valor, min, max) {
+    var numero = Number(valor) || 0;
+    if (!Number.isFinite(numero)) return min;
+    return Math.min(max, Math.max(min, numero));
+  }
+
+  function normalizarEquipamentoDentroDoCanvas(equipamento) {
+    if (!equipamento || !equipamento.deslocamento) return equipamento;
+    equipamento.deslocamento.x = limitarPosicaoNoCanvas(equipamento.deslocamento.x, LIMITE_CANVAS.minX, LIMITE_CANVAS.maxX);
+    equipamento.deslocamento.y = limitarPosicaoNoCanvas(equipamento.deslocamento.y, LIMITE_CANVAS.minY, LIMITE_CANVAS.maxY);
+    return equipamento;
+  }
 
   function aplicarCanvasView() {
     var svg = elCanvas.querySelector("svg");
@@ -922,9 +940,17 @@
       if (!titulo) return;
       var equipamento = estado.equipamentos.find(function (eq) { return eq.id === titulo.textContent; });
       if (!equipamento || !equipamento.deslocamento) return;
+      normalizarEquipamentoDentroDoCanvas(equipamento);
       node.setAttribute("transform", "translate(" + equipamento.deslocamento.x + "," + equipamento.deslocamento.y + ")");
     });
   }
+
+  window.limitarPosicaoNoCanvas = limitarPosicaoNoCanvas;
+  window.normalizarEquipamentoDentroDoCanvas = normalizarEquipamentoDentroDoCanvas;
+  window.LIMITE_CANVAS = LIMITE_CANVAS;
+  globalThis.limitarPosicaoNoCanvas = limitarPosicaoNoCanvas;
+  globalThis.normalizarEquipamentoDentroDoCanvas = normalizarEquipamentoDentroDoCanvas;
+  globalThis.LIMITE_CANVAS = LIMITE_CANVAS;
 
   // ---------- Roteamento ortogonal automático dos cabos — V3 portas centralizadas ----------
   // Cada conexão recebe um corredor próprio. O caminho final usa somente
@@ -974,15 +1000,34 @@
     svg.querySelectorAll("g.node").forEach(function (node) {
       var titulo = node.querySelector("title");
       if (!titulo) return;
+      var idEquipamento = titulo.textContent;
       try {
         var b = node.getBBox();
-        var t = obterTranslateDoNode(svg, titulo.textContent);
+        var t = obterTranslateDoNode(svg, idEquipamento);
         caixas.push({
-          id: titulo.textContent,
+          id: idEquipamento,
+          tipo: "equipamento",
           x: b.x + t.x,
           y: b.y + t.y,
           width: b.width,
           height: b.height
+        });
+
+        Array.prototype.slice.call(node.querySelectorAll("polygon")).forEach(function (poligono) {
+          var stroke = String(poligono.getAttribute("stroke") || "").toLowerCase();
+          if (!stroke || stroke === "none" || stroke === "transparent") return;
+          try {
+            var bp = poligono.getBBox();
+            if (bp.width < 8 || bp.width > 130 || bp.height < 6 || bp.height > 50) return;
+            caixas.push({
+              id: idEquipamento,
+              tipo: "porta",
+              x: bp.x + t.x,
+              y: bp.y + t.y,
+              width: bp.width,
+              height: bp.height
+            });
+          } catch (e) {}
         });
       } catch (e) {}
     });
@@ -990,11 +1035,7 @@
   }
 
   function obterPontosExatosDasPortas(svg) {
-    // O Graphviz nem sempre entrega o primeiro/último ponto do path exatamente
-    // no centro visual da célula PORT (especialmente com labels HTML + rankdir=LR).
-    // Por isso os pontos de conexão são calculados diretamente pelos retângulos
-    // visíveis das portas no g.node. Assim o cabo sempre nasce/termina no centro
-    // da borda externa da caixa da porta.
+    var direcao = (selDirecao && selDirecao.value) || "LR";
     var estrutura = {};
     var pontos = {};
 
@@ -1015,27 +1056,29 @@
       try { bboxNode = node.getBBox(); } catch (e) { return; }
       var translacao = obterTranslateDoNode(svg, idEquipamento);
       var centroX = bboxNode.x + bboxNode.width / 2;
+      var centroY = bboxNode.y + bboxNode.height / 2;
 
-      // As únicas caixas com borda visível dentro do node são as TDs das portas.
-      // O Graphviz gera dois polygons por célula (fundo + borda); pegamos somente
-      // o polygon cuja borda não é transparente.
       var caixasPorta = Array.prototype.slice.call(node.querySelectorAll("polygon")).map(function (poligono) {
         var stroke = String(poligono.getAttribute("stroke") || "").toLowerCase();
         if (!stroke || stroke === "none" || stroke === "transparent") return null;
         try {
           var b = poligono.getBBox();
-          // Filtro de segurança: portas do projeto são pequenas e retangulares.
           if (b.width < 30 || b.width > 130 || b.height < 8 || b.height > 50) return null;
           return { poligono: poligono, bbox: b, cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
         } catch (e) { return null; }
       }).filter(Boolean);
 
-      var entradasVisuais = caixasPorta.filter(function (item) { return item.cx < centroX; });
-      var saidasVisuais = caixasPorta.filter(function (item) { return item.cx >= centroX; });
+      var entradasVisuais;
+      var saidasVisuais;
 
-      // SVG: menor Y = mais acima. A ordem visual precisa ser a mesma ordem
-      // das portas mostradas na tabela, independentemente de como o Graphviz
-      // resolveu internamente tailport/headport.
+      if (direcao === "TB") {
+        entradasVisuais = caixasPorta.filter(function (item) { return item.cy < centroY; });
+        saidasVisuais = caixasPorta.filter(function (item) { return item.cy >= centroY; });
+      } else {
+        entradasVisuais = caixasPorta.filter(function (item) { return item.cx < centroX; });
+        saidasVisuais = caixasPorta.filter(function (item) { return item.cx >= centroX; });
+      }
+
       entradasVisuais.sort(function (a, b) { return a.cy - b.cy; });
       saidasVisuais.sort(function (a, b) { return a.cy - b.cy; });
 
@@ -1043,22 +1086,36 @@
         var caixa = entradasVisuais[ordem];
         if (!caixa) return;
         if (!pontos[indiceConexao]) pontos[indiceConexao] = {};
-        pontos[indiceConexao].fim = {
-          // Entrada: conectar no CENTRO da borda esquerda da caixa.
-          x: caixa.bbox.x + translacao.x,
-          y: caixa.cy + translacao.y
-        };
+
+        if (direcao === "TB") {
+          pontos[indiceConexao].fim = {
+            x: caixa.cx + translacao.x,
+            y: caixa.bbox.y + translacao.y
+          };
+        } else {
+          pontos[indiceConexao].fim = {
+            x: caixa.bbox.x + translacao.x,
+            y: caixa.cy + translacao.y
+          };
+        }
       });
 
       estrutura[idEquipamento].saida.forEach(function (indiceConexao, ordem) {
         var caixa = saidasVisuais[ordem];
         if (!caixa) return;
         if (!pontos[indiceConexao]) pontos[indiceConexao] = {};
-        pontos[indiceConexao].inicio = {
-          // Saída: conectar no CENTRO da borda direita da caixa.
-          x: caixa.bbox.x + caixa.bbox.width + translacao.x,
-          y: caixa.cy + translacao.y
-        };
+
+        if (direcao === "TB") {
+          pontos[indiceConexao].inicio = {
+            x: caixa.cx + translacao.x,
+            y: caixa.bbox.y + caixa.bbox.height + translacao.y
+          };
+        } else {
+          pontos[indiceConexao].inicio = {
+            x: caixa.bbox.x + caixa.bbox.width + translacao.x,
+            y: caixa.cy + translacao.y
+          };
+        }
       });
     });
 
@@ -1069,6 +1126,36 @@
     var amin = Math.min(a1, a2), amax = Math.max(a1, a2);
     var bmin = Math.min(b1, b2), bmax = Math.max(b1, b2);
     return amax + folga >= bmin && bmax + folga >= amin;
+  }
+
+  function segmentosSeCruzam(x1, y1, x2, y2, x3, y3, x4, y4) {
+    var denom = (x1 - x2) * (y3 - y4) - (x1 - x2) * (y3 - y4);
+    var numerator = (x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4);
+    if (denom === 0) return false;
+    var t = numerator / denom;
+    if (t < 0 || t > 1) return false;
+    var u = ((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+    return u >= 0 && u <= 1;
+  }
+
+  function segmentoCruzaRetangulo(x1, y1, x2, y2, caixa, margem) {
+    var rx1 = caixa.x - margem;
+    var ry1 = caixa.y - margem;
+    var rx2 = caixa.x + caixa.width + margem;
+    var ry2 = caixa.y + caixa.height + margem;
+    var lados = [
+      [rx1, ry1, rx2, ry1],
+      [rx2, ry1, rx2, ry2],
+      [rx2, ry2, rx1, ry2],
+      [rx1, ry2, rx1, ry1]
+    ];
+    for (var i = 0; i < lados.length; i++) {
+      var lado = lados[i];
+      if (segmentosSeCruzam(x1, y1, x2, y2, lado[0], lado[1], lado[2], lado[3])) return true;
+    }
+    var dentro = x1 >= rx1 && x1 <= rx2 && y1 >= ry1 && y1 <= ry2;
+    var dentro2 = x2 >= rx1 && x2 <= rx2 && y2 >= ry1 && y2 <= ry2;
+    return dentro || dentro2;
   }
 
   function verticalCruzaCaixa(x, y1, y2, caixa, margem) {
@@ -1083,32 +1170,50 @@
 
   function corredorVerticalLivre(x, rota, ocupados, caixas) {
     var espaco = CONFIG_ROTEAMENTO_CABOS.espaco;
+    var margemObstaculo = CONFIG_ROTEAMENTO_CABOS.margemEquipamento + 3;
     for (var i = 0; i < ocupados.length; i++) {
       var o = ocupados[i];
       if (Math.abs(o.x - x) < espaco && intervalosSobrepoem(rota.inicio.y, rota.fim.y, o.y1, o.y2, espaco * 0.2)) return false;
     }
+
+    var segmentos = [
+      { x1: rota.inicio.x, y1: rota.inicio.y, x2: x, y2: rota.inicio.y },
+      { x1: x, y1: rota.inicio.y, x2: x, y2: rota.fim.y },
+      { x1: x, y1: rota.fim.y, x2: rota.fim.x, y2: rota.fim.y }
+    ];
+
     for (var j = 0; j < caixas.length; j++) {
       var c = caixas[j];
       if (c.id === rota.conexao.de || c.id === rota.conexao.para) continue;
-      if (verticalCruzaCaixa(x, rota.inicio.y, rota.fim.y, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
-      if (horizontalCruzaCaixa(rota.inicio.y, rota.inicio.x, x, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
-      if (horizontalCruzaCaixa(rota.fim.y, x, rota.fim.x, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
+      for (var s = 0; s < segmentos.length; s++) {
+        var seg = segmentos[s];
+        if (segmentoCruzaRetangulo(seg.x1, seg.y1, seg.x2, seg.y2, c, margemObstaculo)) return false;
+      }
     }
     return true;
   }
 
   function corredorHorizontalLivre(y, rota, ocupados, caixas) {
     var espaco = CONFIG_ROTEAMENTO_CABOS.espaco;
+    var margemObstaculo = CONFIG_ROTEAMENTO_CABOS.margemEquipamento + 3;
     for (var i = 0; i < ocupados.length; i++) {
       var o = ocupados[i];
       if (Math.abs(o.y - y) < espaco && intervalosSobrepoem(rota.inicio.x, rota.fim.x, o.x1, o.x2, espaco * 0.2)) return false;
     }
+
+    var segmentos = [
+      { x1: rota.inicio.x, y1: rota.inicio.y, x2: rota.fim.x, y2: rota.inicio.y },
+      { x1: rota.fim.x, y1: rota.inicio.y, x2: rota.fim.x, y2: y },
+      { x1: rota.inicio.x, y1: y, x2: rota.fim.x, y2: y }
+    ];
+
     for (var j = 0; j < caixas.length; j++) {
       var c = caixas[j];
       if (c.id === rota.conexao.de || c.id === rota.conexao.para) continue;
-      if (horizontalCruzaCaixa(y, rota.inicio.x, rota.fim.x, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
-      if (verticalCruzaCaixa(rota.inicio.x, rota.inicio.y, y, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
-      if (verticalCruzaCaixa(rota.fim.x, y, rota.fim.y, c, CONFIG_ROTEAMENTO_CABOS.margemEquipamento)) return false;
+      for (var s = 0; s < segmentos.length; s++) {
+        var seg = segmentos[s];
+        if (segmentoCruzaRetangulo(seg.x1, seg.y1, seg.x2, seg.y2, c, margemObstaculo)) return false;
+      }
     }
     return true;
   }
@@ -1235,9 +1340,6 @@
       var path = aresta.querySelector("path");
       if (!path) return;
 
-      // Primeiro tenta usar o centro EXATO das caixas de porta visíveis.
-      // Só usa o path original do Graphviz como fallback caso alguma porta
-      // não possa ser identificada no SVG.
       var pontoVisual = pontosPortas[indice] || {};
       var inicio = pontoVisual.inicio;
       var fim = pontoVisual.fim;
@@ -1268,27 +1370,26 @@
         }
       }
 
-      rotas.push({ indice: indice, conexao: conexao, aresta: aresta, path: path, inicio: inicio, fim: fim });
+      var direcaoRota = obterDirecaoConexaoPorPosicao(conexao);
+      rotas.push({ indice: indice, conexao: conexao, aresta: aresta, path: path, inicio: inicio, fim: fim, direcao: direcaoRota });
     });
 
-    var direcao = selDirecao.value === "TB" ? "TB" : "LR";
     var grupos = {};
     rotas.forEach(function (rota) {
-      // Agrupa pelo equipamento de destino: este é o caso clássico de vários
-      // enlaces convergindo para um switch/OLT, como na referência enviada.
-      var chave = rota.conexao.para + "|" + direcao;
+      var chave = rota.conexao.para + "|" + rota.direcao;
       if (!grupos[chave]) grupos[chave] = [];
       grupos[chave].push(rota);
     });
 
-    var ocupados = [];
     Object.keys(grupos).forEach(function (chave) {
       var grupo = grupos[chave];
+      var direcaoRota = grupo[0] && grupo[0].direcao ? grupo[0].direcao : "LR";
+      var ocupados = [];
       grupo.sort(function (a, b) {
-        return direcao === "TB" ? a.inicio.x - b.inicio.x : a.inicio.y - b.inicio.y;
+        return direcaoRota === "TB" ? a.inicio.x - b.inicio.x : a.inicio.y - b.inicio.y;
       });
       grupo.forEach(function (rota, indice) {
-        if (direcao === "TB") roteiarUmaRotaTB(rota, indice, grupo.length, ocupados, caixas);
+        if (direcaoRota === "TB") roteiarUmaRotaTB(rota, indice, grupo.length, ocupados, caixas);
         else roteiarUmaRotaLR(rota, indice, grupo.length, ocupados, caixas);
       });
     });
@@ -1385,6 +1486,8 @@
           posicaoAnteriorY = deslocamento.y;
         }
         function soltar() {
+          deslocamento.x = limitarPosicaoNoCanvas(deslocamento.x, LIMITE_CANVAS.minX, LIMITE_CANVAS.maxX);
+          deslocamento.y = limitarPosicaoNoCanvas(deslocamento.y, LIMITE_CANVAS.minY, LIMITE_CANVAS.maxY);
           equipamento.deslocamento = { x: deslocamento.x, y: deslocamento.y };
           salvarLocal();
           atualizarJsonAvancado();
@@ -2407,8 +2510,8 @@
     var maiorQtdPortas = Math.max.apply(null, [1].concat(Object.keys(contagemPortas).map(function (id) { return contagemPortas[id]; })));
     // Reserva espaço horizontal/vertical suficiente para os corredores de cabo.
     var ranksepAuto = Math.max(1.15, Math.min(4.5, 0.95 + maiorQtdPortas * 0.16));
-    var linhas = ["digraph G {", '  rankdir=' + direcao + ';', '  splines=ortho;', '  concentrate=false;', '  overlap=false;', '  nodesep=0.55;', '  ranksep=' + ranksepAuto.toFixed(2) + ';', '  pad=0.06;', '  bgcolor="transparent";',
-      '  node [shape=box, style="filled", fontname="Helvetica", fontsize=10, margin="0.04,0.06", color="#547184", penwidth=1.1];',
+    var linhas = ["digraph G {", '  rankdir=' + direcao + ';', '  splines=ortho;', '  concentrate=false;', '  overlap=false;', '  nodesep=0.45;', '  ranksep=' + ranksepAuto.toFixed(2) + ';', '  pad=0;', '  margin=0;', '  bgcolor="transparent";',
+      '  node [shape=box, style="filled", fontname="Helvetica", fontsize=10, margin="0.02,0.02", color="#547184", penwidth=1.1];',
       '  edge [fontname="Helvetica", fontsize=8, color="#263746", fontcolor="#344D61", penwidth=1.5, arrowhead=none, labeldistance=1.25, labelangle=0, labelfontname="Helvetica", labelfontsize=8];'];
     var portasPorEquipamento = {};
     dados.equipamentos.forEach(function (eq) { portasPorEquipamento[eq.id] = { entrada: [], saida: [] }; });
@@ -2519,7 +2622,10 @@
       var corConexao = c.cor || "#5A7284";
       var grossura = c.grossura || 2;
       var estilo = c.estilo && c.estilo !== "solid" ? ', style="' + escapar(c.estilo) + '"' : "";
+      var portaDirecao = direcao === "TB" ? ', tailport="n", headport="s"' : ', tailport="e", headport="w"';
       var portas = ', tailport="out_' + indice + '", headport="in_' + indice + '"';
+      if (direcao === "TB") portas = portaDirecao;
+      if (direcao !== "TB") portas = portaDirecao;
       var capacidade = c.potencia ? " · " + c.potencia : "";
       var rotuloTexto = c.tipo ? c.tipo + capacidade : capacidade.replace(/^ · /, "");
       var rotulo = ' [id="edge_' + indice + '", label="' + escapar(rotuloTexto) + '", color="' + corConexao + '", fontcolor="#34495A", penwidth=' + Math.max(1, grossura) + estilo + portas + ']';
@@ -2659,6 +2765,125 @@
     });
   }
 
+  function obterDirecaoConexaoPorPosicao(conexao) {
+    var origem = estado.equipamentos.find(function (eq) { return eq.id === conexao.de; });
+    var destino = estado.equipamentos.find(function (eq) { return eq.id === conexao.para; });
+    if (!origem || !destino) return (selDirecao && selDirecao.value) || "LR";
+
+    var posA = origem.deslocamento || { x: 0, y: 0 };
+    var posB = destino.deslocamento || { x: 0, y: 0 };
+    var diferencaX = posB.x - posA.x;
+    var diferencaY = posB.y - posA.y;
+
+    if (Math.abs(diferencaX) > Math.abs(diferencaY)) return "LR";
+    if (Math.abs(diferencaY) > Math.abs(diferencaX)) return "TB";
+    return (selDirecao && selDirecao.value) || "LR";
+  }
+
+  function organizarDiagramaAutomaticamente(opcoes) {
+    if (!estado.equipamentos.length) return;
+
+    var config = Object.assign({
+      passoX: 260,
+      passoY: 180,
+      folga: 70
+    }, opcoes || {});
+
+    var vizinhos = {};
+    var fila = [];
+    var camadas = {};
+    var profundidade = {};
+
+    estado.equipamentos.forEach(function (eq) {
+      vizinhos[eq.id] = [];
+      profundidade[eq.id] = Number.MAX_SAFE_INTEGER;
+    });
+
+    estado.conexoes.forEach(function (conexao) {
+      if (vizinhos[conexao.de]) vizinhos[conexao.de].push(conexao.para);
+      if (vizinhos[conexao.para]) vizinhos[conexao.para].push(conexao.de);
+    });
+
+    var raiz = estado.equipamentos[0].id;
+    profundidade[raiz] = 0;
+    fila.push(raiz);
+    while (fila.length) {
+      var atual = fila.shift();
+      var camadaAtual = profundidade[atual] || 0;
+      if (!camadas[camadaAtual]) camadas[camadaAtual] = [];
+      camadas[camadaAtual].push(atual);
+
+      (vizinhos[atual] || []).forEach(function (vizinho) {
+        if (profundidade[vizinho] === undefined || profundidade[vizinho] > camadaAtual + 1) {
+          profundidade[vizinho] = camadaAtual + 1;
+          fila.push(vizinho);
+        }
+      });
+    }
+
+    var posicoes = {};
+    Object.keys(camadas).forEach(function (chaveCamada) {
+      var camada = camadas[chaveCamada].slice().sort(function (a, b) {
+        var grauA = (vizinhos[a] || []).length;
+        var grauB = (vizinhos[b] || []).length;
+        return grauB - grauA || String(a).localeCompare(String(b));
+      });
+
+      camada.forEach(function (id, indice) {
+        posicoes[id] = {
+          x: Number(chaveCamada) * config.passoX,
+          y: (indice - (camada.length - 1) / 2) * config.passoY
+        };
+      });
+    });
+
+    estado.equipamentos.forEach(function (eq) {
+      if (!eq.deslocamento || !Number.isFinite(eq.deslocamento.x) || !Number.isFinite(eq.deslocamento.y)) {
+        eq.deslocamento = { x: 0, y: 0 };
+      }
+      var base = posicoes[eq.id] || { x: 0, y: 0 };
+      var manual = eq.deslocamento || { x: 0, y: 0 };
+      var x = base.x + manual.x * 0.25;
+      var y = base.y + manual.y * 0.25;
+      posicoes[eq.id] = { x: x, y: y };
+    });
+
+    var chaves = Object.keys(posicoes);
+    for (var iteracao = 0; iteracao < 8; iteracao++) {
+      for (var i = 0; i < chaves.length; i++) {
+        for (var j = i + 1; j < chaves.length; j++) {
+          var a = chaves[i];
+          var b = chaves[j];
+          var pa = posicoes[a];
+          var pb = posicoes[b];
+          var dx = pb.x - pa.x;
+          var dy = pb.y - pa.y;
+          var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          if (dist < config.folga) {
+            var ajuste = (config.folga - dist) / 2;
+            var ex = dx / dist;
+            var ey = dy / dist;
+            pa.x -= ex * ajuste;
+            pa.y -= ey * ajuste;
+            pb.x += ex * ajuste;
+            pb.y += ey * ajuste;
+          }
+        }
+      }
+    }
+
+    estado.equipamentos.forEach(function (eq) {
+      var pos = posicoes[eq.id] || { x: 0, y: 0 };
+      eq.deslocamento = { x: Number(pos.x), y: Number(pos.y) };
+    });
+
+    renderTudo();
+    if (estado.equipamentos.length) gerar();
+  }
+
+  window.organizarDiagramaAutomaticamente = organizarDiagramaAutomaticamente;
+  window.obterDirecaoConexaoPorPosicao = obterDirecaoConexaoPorPosicao;
+
   function gerar() {
     window.clearTimeout(atualizacaoDiagramaPendente);
     esconderErro();
@@ -2687,7 +2912,12 @@
     }
   }
 
+  window.gerar = gerar;
+
   btnGerar.addEventListener("click", gerar);
+  btnOrganizar.addEventListener("click", function () {
+    organizarDiagramaAutomaticamente();
+  });
 
   btnCopiar.addEventListener("click", function () {
     if (!ultimoDot) return;
