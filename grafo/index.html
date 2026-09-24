@@ -737,7 +737,7 @@
 
   function imagemDoIcone(valor) {
     var item = CATALOGO_ICONES.find(function (icone) { return icone.valor === valor; });
-    return item && item.arquivo ? "Imagens/" + item.arquivo : "";
+    return item && item.arquivo ? "./Imagens/" + item.arquivo : "";
   }
 
   function renderizarTiposSugeridos() {
